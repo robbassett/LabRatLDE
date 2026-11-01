@@ -35,6 +35,8 @@ var iqTriggers = []string{
 	"record_revisions_append_only", "record_revisions_no_truncate",
 	"runs_params_sealed",
 	"notes_guard", "notes_no_truncate", "notes_role_gate",
+	"tenants_gxp_audited", "runs_copy_signing_policy", "runs_signing_columns", "principals_name_audited",
+	"experiments_default_signing_policy",
 }
 
 // runIQ is the installation qualification: read-only catalog checks that the

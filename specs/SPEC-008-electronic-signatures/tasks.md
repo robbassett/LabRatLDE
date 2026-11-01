@@ -14,7 +14,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 1: Signing policies and printed names
 
-- [ ] 1.1 Migration `0015_signing_policy`
+- [x] 1.1 Migration `0015_signing_policy`
   - Requirements: SPEC-008-R13, SPEC-008-R15 (setting), SPEC-008-R17
   - Files: `internal/storage/migrations/0015_signing_policy.sql`, `cmd/server/iq.go`
   - Do: everything in design §2 "GxP mode and signing policies" and "Printed names": `tenants.gxp`, `tenants_gxp_audited`, `signing_policy_valid`, the `experiments` and `runs` columns, the replaced `experiments_revisions`, `runs_copy_signing_policy`, `runs_signing_columns`, the replaced `principals_reject_mutation`, `principals_name_audited`, and the grants. Add the four new triggers to `iqTriggers`.
@@ -133,6 +133,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - A scientist with an empty-items committed change set updating the column directly fails with `LDE05`.
     - As `lde_app`, `UPDATE tenants SET gxp = false` fails with `42501`. As the owner with no event, it fails with `LDE02` at commit. With a `tenant.gxp_changed` event, it succeeds.
     - Non-GxP: scientist fails with `LDE05`; reviewer succeeds.
+    - An experiment inserted as `lde_app` with a one-step policy gets the default policy.
     - A run created before the change keeps its old policy, and one created after has the new one (SPEC-008-R13, checked here, not a separate test).
     - An invalid policy (a gap in steps, an unknown meaning, empty) fails with `23514`.
     - Comment `// SPEC-008-R15`.
