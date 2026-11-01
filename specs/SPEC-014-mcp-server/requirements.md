@@ -39,7 +39,7 @@ Scientists increasingly work with AI assistants (Claude, GPT) that could read pr
 |---|---|---|---|
 | SPEC-014-R01 | Where `LDE_MCP_ENABLED=true`, the server shall serve MCP over Streamable HTTP at `/mcp`; otherwise `/mcp` shall respond `404`. | no | deployment choice |
 | SPEC-014-R02 | If an MCP request's bearer token doesn't resolve to an agent principal with an active delegation, then the MCP server shall reject it before any tool or resource runs. | yes | 11.10(d) |
-| SPEC-014-R03 | The MCP server shall expose no tool that commits, rejects or withdraws change sets, publishes schemas, applies signatures, transitions runs, or changes principals, roles or delegations. | yes | ROADMAP D6, 11.100(a) |
+| SPEC-014-R03 | The MCP server shall expose no tool that commits, rejects or withdraws change sets, publishes schemas, applies signatures, records validation item decisions (SPEC-022), transitions runs, or changes principals, roles or delegations. | yes | ROADMAP D6, 11.100(a) |
 | SPEC-014-R04 | When an MCP tool causes a mutation, the database shall record it with actor `<human> via <agent>` (SPEC-006-R09) in the same transaction. | yes | 11.10(e) |
 | SPEC-014-R05 | While an agent acts for a human, the MCP server shall return only records that human's roles allow (SPEC-006-R08 intersection). | yes | 11.10(g) |
 | SPEC-014-R06 | When `propose_change_set` is called, the MCP server shall create a change set with `source = agent` in state `proposed` and return its id and review URL. | no | workflow |
