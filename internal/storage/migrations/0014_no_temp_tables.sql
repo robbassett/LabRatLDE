@@ -2,12 +2,14 @@
 --
 -- Triggers and role checks that don't pin search_path resolve table names
 -- with pg_temp first, so a TEMP table named runs or principals would stand in
--- for the real one and switch the check off. Revoking TEMP closes that for
--- every function, present and future.
+-- for the real one and switch the check off. Revoking TEMP stops lde_app doing
+-- that, whichever function is involved. The login role keeps TEMP if it owns
+-- the database, but it can already RESET ROLE and owns the tables.
 --
 -- Only the database owner or a superuser can revoke this, and a login role
 -- that merely owns the schema gets no error, only no effect. So this warns
--- rather than blocking startup, and `labrat iq` fails until an admin runs:
+-- rather than blocking startup. The server logs an error on every boot, and
+-- `labrat iq` fails, until an admin runs:
 --   REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC;
 
 -- SPEC-007-R02, SPEC-007-R06
