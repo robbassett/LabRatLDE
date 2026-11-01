@@ -293,12 +293,14 @@ A binary built without `make ui` serves a "UI not built" page at `/`; the API ke
 ### Traceability report and install checks
 
 ```bash
-go run ./cmd/server iq                      # IQ: migrations, RLS, integrity triggers, lde_app role, binary SHA-256
+go run ./cmd/server iq                      # IQ: migrations, RLS, integrity triggers, lde_app role and TEMP privilege, binary SHA-256
 make validate OPERATOR="J. Doe"             # full suite against the database -> traceability report in validation/<timestamp>/
 cd validation/<timestamp> && sha256sum -c report.sha256
 ```
 
-`labrat iq` is read-only and exits non-zero, printing each failure, if any check fails. `make validate` needs Postgres
+`labrat iq` is read-only and exits non-zero, printing each failure, if any check fails. A plain `pg_dump` restore loses
+the database-level `REVOKE TEMPORARY` from migration 0014: the server logs an error on every boot and `iq` fails until
+the database owner runs `REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC`. `make validate` needs Postgres
 (`make up`). It writes `report.md` (traceability matrix, environment, blank sign-off table), `report.json` and
 `report.sha256`. The run fails, and the report says why, if any `Test: yes` requirement in an Approved or Implemented
 spec has no passing test, if a test cites an unknown requirement, or if `go test` fails. Only a report from a clean,
@@ -397,6 +399,7 @@ honest stubs. Do not use for regulated work yet.
 | Traceability report (`make validate`) and install checks (`labrat iq`) | ✅ implemented (SPEC-004); evidence only, not a validation package |
 | Validation documentation (risk assessment, IQ/OQ protocols, expected vs actual results) | 🔜 roadmap (SPEC-020) |
 | Web UI: workspace shell (explorer, tabs, lineage, audit viewer; SPEC-005) | ✅ implemented; read-only views, no Playwright tests yet. Editing and charts are on the roadmap |
+| Revisions, change sets and notes: append-only history, reviewed edits, diff and blame (SPEC-007) | 🚧 in progress; sealed records wait for SPEC-008. See [docs/revisions.md](docs/revisions.md) |
 
 The phased plan, design decisions and reserved spec numbers are in
 [`specs/ROADMAP.md`](specs/ROADMAP.md).

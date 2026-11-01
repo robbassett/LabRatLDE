@@ -65,6 +65,13 @@ func run() error {
 			return err
 		}
 	}
+	// Checked on every boot: the migration's own warning never reaches this
+	// log, and a restored database has lost the revoke but won't migrate again.
+	if appTemp, err := db.AppRoleCanCreateTemp(ctx); err != nil {
+		log.Error("could not check whether lde_app can create TEMP tables", "err", err)
+	} else if appTemp {
+		log.Error("lde_app can create TEMP tables, which can switch off database integrity checks; as the database owner run: REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC")
+	}
 	if cfg.Env == "dev" {
 		if err := db.EnsureTenant(ctx, config.DevTenantID, "dev", "Development"); err != nil {
 			return fmt.Errorf("seed dev tenant: %w", err)

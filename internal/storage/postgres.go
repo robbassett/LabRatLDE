@@ -92,6 +92,16 @@ func (db *DB) EnsureTenant(ctx context.Context, id, slug, name string) error {
 	return err
 }
 
+// AppRoleCanCreateTemp reports whether AppRole may create TEMP tables in this
+// database, which would let them stand in for real tables in unpinned triggers.
+// Migration 0014 revokes it, but the revoke doesn't survive a dump and restore.
+func (db *DB) AppRoleCanCreateTemp(ctx context.Context) (bool, error) {
+	var can bool
+	err := db.Pool.QueryRow(ctx,
+		`SELECT has_database_privilege($1, current_database(), 'TEMPORARY')`, AppRole).Scan(&can)
+	return can, err
+}
+
 // ErrorCode extracts the SQLSTATE from a Postgres error, or "".
 func ErrorCode(err error) string {
 	var pgErr *pgconn.PgError

@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented |
 | **Owner** | Rob Bassett |
-| **Created / Updated** | 2026-10-18 / 2026-10-18 |
+| **Created / Updated** | 2026-10-18 / 2026-10-30 |
 | **Regulatory refs** | 21 CFR 11.10(e) ("shall not obscure previously recorded information"), 11.10(c) |
 | **Depends on** | `SPEC-002`, `SPEC-005`, `SPEC-006` |
 
@@ -37,7 +37,7 @@ Scientists routinely correct records (a mistyped volume), add to them (a late ob
 |---|---|---|---|
 | SPEC-007-R01 | When a revisable record is inserted or a revisable field changes, the database shall append a revision holding the full new value, the revision number (previous + 1), author, reason, change set id and time, in the same transaction. | yes | 11.10(e) |
 | SPEC-007-R02 | If a revisable field changes in a transaction without a committing change set and a non-blank reason, then the database shall reject the statement. | yes | 11.10(e) |
-| SPEC-007-R03 | If any role attempts to update, delete or truncate revisions, then the database shall reject the statement with SQLSTATE `LDE03`. | yes | 11.10(c), (e) |
+| SPEC-007-R03 | If any role attempts to update, delete or truncate revisions, then the database shall reject the statement: `lde_app` holds no such privilege (SQLSTATE `42501`), and for any role that does, including the owner, a trigger raises `LDE03`. | yes | 11.10(c), (e) |
 | SPEC-007-R04 | When a change set is committed, the change set API shall apply all of its items, revisions and audit events in one transaction, or none of them. | yes | data integrity |
 | SPEC-007-R05 | While a change set is not committed, its items shall not appear in record reads, lineage closures, queries or signature manifests. | yes | data integrity |
 | SPEC-007-R06 | If a principal of kind `agent` or `service` commits or rejects a change set, then the database shall reject it with SQLSTATE `LDE05`. | yes | 11.10(g), ROADMAP D6 |
@@ -55,9 +55,9 @@ Fixture: alice (scientist), bob (reviewer), bot (agent acting for alice). Sample
 
 **SPEC-007-R01**: alice edits `S` attrs to `{"volume_ul": 45}` with reason "pipetting error". `S` now has revisions 1 (`50`, author alice, reason "created") and 2 (`45`, reason "pipetting error"), and the current row shows `45`. Revision 1 is still readable.
 
-**SPEC-007-R02**: in a transaction that sets no change set, `UPDATE lineage_nodes SET attrs = '{}' WHERE id = S` fails. With a change set but a reason of `"  "`, it also fails.
+**SPEC-007-R02**: in a transaction that sets no change set, `UPDATE lineage_nodes SET attrs = '{}' WHERE id = S` fails with `LDE03`. It also fails when the change set it names is only `proposed`, or was committed in an earlier transaction. A change set with a reason of `"  "` can't be created at all (`23514`), so no edit can carry that reason. A run state change, which touches no revisable field, still needs no change set.
 
-**SPEC-007-R03**: `UPDATE`, `DELETE` and `TRUNCATE` on `record_revisions`, run as the owner, each fail with `LDE03`.
+**SPEC-007-R03**: `UPDATE`, `DELETE` and `TRUNCATE` on `record_revisions` each fail with `42501` as `lde_app`, and with `LDE03` as the owner.
 
 **SPEC-007-R04**: a change set with items [edit `S` attrs, add edge `S` →used→ `R`, add edge `R` →used→ `S`] is committed. The second edge creates a cycle, so nothing is applied: `S` stays at its previous revision and the audit chain length is unchanged.
 
@@ -73,5 +73,5 @@ Fixture: alice (scientist), bob (reviewer), bot (agent acting for alice). Sample
 
 | # | Question | Owner | Answer (date) |
 |---|---|---|---|
-| 1 | Should run params stay editable while a run is `running`, or only while `planned`? Recommendation: editable until the first signature, always with a reason. | Rob Bassett | |
-| 2 | Should committing someone else's proposed change set (not sealed) need `reviewer`, or is `scientist` enough? Recommendation: `scientist`, since sealed records already need review (SPEC-008). | Rob Bassett | |
+| 1 | Should run params stay editable while a run is `running`, or only while `planned`? Recommendation: editable until the first signature, always with a reason. | Rob Bassett | Editable in any state until the run is sealed (signed or aborted), always with a reason (2026-10-30) |
+| 2 | Should committing someone else's proposed change set (not sealed) need `reviewer`, or is `scientist` enough? Recommendation: `scientist`, since sealed records already need review (SPEC-008). | Rob Bassett | `scientist` (2026-10-30) |
