@@ -1145,10 +1145,10 @@ func TestRevisableFieldsNeedChangeSet(t *testing.T) {
 	}
 	before := countRevs()
 	err = inTx(func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE change_sets (LIKE public.change_sets INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
-			t.Skipf("lde_app cannot create temp tables: %v", err)
+		if err := shadowTable(ctx, tx, "change_sets", `(LIKE public.change_sets INCLUDING DEFAULTS)`); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE record_revisions (LIKE public.record_revisions) ON COMMIT DROP`); err != nil {
+		if err := shadowTable(ctx, tx, "record_revisions", `(LIKE public.record_revisions)`); err != nil {
 			return err
 		}
 		var forged string
@@ -1173,10 +1173,10 @@ func TestRevisableFieldsNeedChangeSet(t *testing.T) {
 	// sealed-params check (SPEC-007-R10).
 	sf := newSealFixture(t, db, "signed")
 	err = db.WithTenant(ctx, sf.tenant, as(sf.tenant), func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE runs (tenant_id uuid, node_id uuid, state text) ON COMMIT DROP`); err != nil {
-			t.Skipf("lde_app cannot create temp tables: %v", err)
+		if err := shadowTable(ctx, tx, "runs", `(tenant_id uuid, node_id uuid, state text)`); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE lineage_edges (tenant_id uuid, from_id uuid, to_id uuid, relation text) ON COMMIT DROP`); err != nil {
+		if err := shadowTable(ctx, tx, "lineage_edges", `(tenant_id uuid, from_id uuid, to_id uuid, relation text)`); err != nil {
 			return err
 		}
 		if _, err := commitChangeSet(ctx, tx, sf.tenant, "it@lab", "shadowed params"); err != nil {
@@ -1186,6 +1186,36 @@ func TestRevisableFieldsNeedChangeSet(t *testing.T) {
 		return err
 	})
 	wantCode(t, "sealed run params with shadow tables", err, storage.CodeSealed)
+}
+
+// shadowTable creates a TEMP table in tx that hides a real one, for proving
+// that pinned functions ignore it. lde_app may not create TEMP tables (0014),
+// so the owner creates this one and hands it over.
+func shadowTable(ctx context.Context, tx pgx.Tx, name, def string) error {
+	for _, stmt := range []string{
+		`RESET ROLE`,
+		`CREATE TEMP TABLE ` + name + ` ` + def + ` ON COMMIT DROP`,
+		`GRANT ALL ON pg_temp.` + name + ` TO ` + storage.AppRole,
+		`SET LOCAL ROLE ` + storage.AppRole,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SPEC-007-R02, SPEC-007-R06: unpinned triggers and role checks resolve table
+// names through search_path, so a TEMP table could stand in for a real one.
+func TestAppRoleCannotCreateTempTables(t *testing.T) {
+	db := openTestDB(t)
+	tenant := newTenant(t, db)
+	ctx := context.Background()
+	err := db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `CREATE TEMP TABLE runs (LIKE public.runs) ON COMMIT DROP`)
+		return err
+	})
+	wantCode(t, "lde_app creates a TEMP table", err, "42501")
 }
 
 // SPEC-007-R03
@@ -1280,10 +1310,10 @@ func TestNotesOnSealedNodes(t *testing.T) {
 
 	// TEMP tables named runs and lineage_edges must not shadow the real ones.
 	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE runs (tenant_id uuid, node_id uuid, state text) ON COMMIT DROP`); err != nil {
-			t.Skipf("lde_app cannot create temp tables: %v", err)
+		if err := shadowTable(ctx, tx, "runs", `(tenant_id uuid, node_id uuid, state text)`); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE lineage_edges (tenant_id uuid, from_id uuid, to_id uuid, relation text) ON COMMIT DROP`); err != nil {
+		if err := shadowTable(ctx, tx, "lineage_edges", `(tenant_id uuid, from_id uuid, to_id uuid, relation text)`); err != nil {
 			return err
 		}
 		var shadowed bool

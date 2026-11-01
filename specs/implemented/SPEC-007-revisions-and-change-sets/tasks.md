@@ -407,3 +407,4 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 - [x] 6.2 `uat-planner` writes [uat.md](uat.md)
 - [x] 6.3 Status set to Implemented, folder moved to `specs/implemented/`, `ROADMAP.md` updated
 - [x] 6.4 Summary commit written as the PR description
+  - [x] 6.4a Post-close hardening, decided by the owner on 2026-11-01: migration `0014_no_temp_tables`, an `iq` check, `TestAppRoleCannotCreateTempTables`, and a `shadowTable` test helper replacing the `t.Skipf` paths, which would otherwise have skipped the rest of `Test: yes` tests. Integrity: yes

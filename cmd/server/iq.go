@@ -202,6 +202,18 @@ func runIQ(args []string) error {
 		report(true, "lde_app", "NOSUPERUSER NOBYPASSRLS")
 	}
 
+	var appTemp bool
+	err = db.Pool.QueryRow(ctx,
+		`SELECT has_database_privilege('lde_app', current_database(), 'TEMPORARY')`).Scan(&appTemp)
+	switch {
+	case err != nil:
+		return fmt.Errorf("iq: lde_app temp: %w", err)
+	case appTemp:
+		report(false, "lde_app temp", "lde_app can create TEMP tables; as the database owner run: REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC")
+	default:
+		report(true, "lde_app temp", "lde_app cannot create TEMP tables")
+	}
+
 	if failed > 0 {
 		return fmt.Errorf("iq: %d check(s) failed", failed)
 	}
