@@ -175,6 +175,7 @@ function Revisions({ tab }: { tab: Tab | null }) {
                   name="revision-from"
                   aria-label={`From revision ${r.rev}`}
                   checked={from === r.rev}
+                  disabled={to !== null && r.rev > to}
                   onChange={() => setFrom(r.rev)}
                 />
               </td>
@@ -184,6 +185,7 @@ function Revisions({ tab }: { tab: Tab | null }) {
                   name="revision-to"
                   aria-label={`To revision ${r.rev}`}
                   checked={to === r.rev}
+                  disabled={from !== null && r.rev < from}
                   onChange={() => setTo(r.rev)}
                 />
               </td>
@@ -214,7 +216,7 @@ function Revisions({ tab }: { tab: Tab | null }) {
               const b = blamed.find((e) => e.path === c.path);
               return (
                 <tr key={c.path}>
-                  <td title={b ? `rev ${b.rev} · ${b.author} · ${new Date(b.at).toLocaleString()}` : undefined}>{c.path}</td>
+                  <td title={b ? `Latest change to this field: rev ${b.rev} · ${b.author} · ${new Date(b.at).toLocaleString()}` : undefined}>{c.path}</td>
                   <td>{c.kind}</td>
                   <td>{c.from === undefined ? '' : JSON.stringify(c.from)}</td>
                   <td>{c.to === undefined ? '' : JSON.stringify(c.to)}</td>

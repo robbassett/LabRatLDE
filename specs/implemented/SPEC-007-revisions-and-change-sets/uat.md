@@ -171,7 +171,8 @@ To open records in the UI: in the explorer, open experiment `plasma-prep`, then 
   - Step 2: revisions are in rev order 1, 2, 3, 4, each with `value`, `author`, `reason`, `change_set_id`, `created_at`. Revision 99 returns `[404]`, and so does the diff.
   - Step 3: `changes` list paths such as `$.label` (changed), `$.attrs.donor` (added, `to` `"D-17"`), `$.attrs["read-out"]` (added, the key is written in brackets because of the hyphen) and `$.attrs.volume_ul` (changed, 50 to 45). Blame lists each leaf (`$.label`, `$.attrs.volume_ul`, `$.attrs.donor`, `$.attrs["read-out"]`) with `rev`, `author` and `at`: `volume_ul` blames rev 2 and `read-out` blames rev 4.
   - Step 4 and 5: a table with columns From, To, Rev, Time, Author, Reason, with one row per revision, oldest first. The Changes table (Path, Kind, From, To) shows the same changes as the terminal.
-  - Step 6: each path shows a tooltip like `rev 2 · alice · <date and time>`, matching the blame from step 3.
+  - Step 5: From radios newer than the chosen To, and To radios older than the chosen From, are disabled, so a backwards comparison can't be picked.
+  - Step 6: a path still present in the latest revision shows a tooltip like `Latest change to this field: rev 2 · alice · <date and time>`, matching the blame from step 3. Removed fields and whole added objects have no tooltip.
   - Step 7: "No differences".
   - Step 8: the panel now shows the experiment's revisions.
 - **Result:** Pass / Fail · Notes:
