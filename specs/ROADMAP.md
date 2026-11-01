@@ -16,7 +16,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-005 | [UI stack and workspace shell](implemented/SPEC-005-ui-workspace-shell/requirements.md) | Implemented |
 | SPEC-006 | [Identity and roles](implemented/SPEC-006-identity-and-roles/requirements.md) | Implemented |
 | SPEC-007 | [Revisions, change sets and notes](implemented/SPEC-007-revisions-and-change-sets/requirements.md) | Implemented |
-| SPEC-008 | [Electronic signatures v2](SPEC-008-electronic-signatures/requirements.md) | Draft |
+| SPEC-008 | [Electronic signatures v2](SPEC-008-electronic-signatures/requirements.md) | Approved |
 | SPEC-009 | [Schema registry and schema-driven forms](SPEC-009-schema-registry-and-forms/requirements.md) | Draft |
 | SPEC-010 | [Schema governance namespaces](SPEC-010-schema-governance/requirements.md) | Draft |
 | SPEC-011 | [Query and comparison](SPEC-011-query-and-comparison/requirements.md) | Draft |
