@@ -1238,6 +1238,15 @@ func TestRevisionsAreAppendOnly(t *testing.T) {
 	_, err = db.Pool.Exec(ctx, `TRUNCATE record_revisions`)
 	wantCode(t, "owner truncates revisions", err, storage.CodeAppendOnly)
 
+	for _, stmt := range []string{
+		`UPDATE record_revisions SET reason = 'x'`,
+		`DELETE FROM record_revisions`,
+		`TRUNCATE record_revisions`,
+	} {
+		err := db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error { _, err := tx.Exec(ctx, stmt); return err })
+		wantCode(t, "app role: "+stmt, err, "42501")
+	}
+
 	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO record_revisions (tenant_id, entity_type, entity_id, rev, value, author, reason)
 			VALUES ($1, 'lineage_node', $2, 9, '{}', 'x', 'x')`, tenant, node)
