@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Owner** | Rob Bassett |
-| **Updated** | 2026-10-30 |
+| **Updated** | 2026-11-01 |
 | **Baseline** | [`SPEC-001`](implemented/SPEC-001-core-integrity/requirements.md) (Implemented) at commit `76a7ff0` |
 
 This is the plan for getting from the scaffold to a regulated pilot and beyond. Each spec is a folder holding `requirements.md`, `design.md` and `tasks.md` (template in `TEMPLATE/`); once implemented and verified it moves to `implemented/` with a `uat.md` user acceptance test plan. Every brief in §5 now has a **Draft** spec. Each spec lists its open questions; resolve them (the `spec-writer` agent can help: `claude --agent spec-writer`), then mark the spec Approved before any work starts. The briefs in §5 are kept as the summary. Where a spec refines a brief's dependencies, the spec wins.
@@ -30,8 +30,9 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-019 | [CLI (optional)](SPEC-019-cli/requirements.md) | Draft |
 | SPEC-020 | Validation documentation | Brief only (§5, Phase 1) |
 | SPEC-021 | [Reference identity broker and IdP recipes](SPEC-021-identity-broker/requirements.md) | Draft |
+| SPEC-022 | [Validation agents](SPEC-022-validation-agents/requirements.md) | Draft |
 
-**SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008).
+**SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008), `LDE08` validation draft item without a current decision (SPEC-022).
 
 ## 1. Where the build stands against the design
 
@@ -78,6 +79,7 @@ These are correctness issues in what exists, not missing features. SPEC-002 and 
 | D11 | Pre-flight checks start **deterministic**: schema, calibration and lot expiry. No open-ended "chemistry rules". | Scope you can actually validate. |
 | D12 | **The OQ is the `Test: yes` suite** (API + DB), plus Playwright for critical UI flows once the UI exists. `make validate` produces the traceability matrix and a stamped report. | The testing policy already is validation as code. |
 | D13 | The CLI is optional automation tooling, not the primary interface. | Follows from D7. |
+| D14 | **Validation stays with the regulated company.** LabRat supplies evidence, agents only draft, and customer QA decides. Anything computable (worklists, evidence gaps, citation checks) is deterministic, and agents make no GMP decisions. | The customer owns validation for its intended use, and a missed item must not look like a clean result. |
 
 ## 3. Schema governance model
 
@@ -153,6 +155,7 @@ Notes are first-class, revisioned Markdown attached to runs and nodes. Policy de
 | SPEC-014 | MCP server | Streamable-HTTP MCP endpoint in the same binary. Resources: lineage, protocols, schemas, audit. Tools: read, validate, propose change sets. Prompts included. Agent principals only; no commit or sign tool | Agent actions audited with `on_behalf_of`; no path to commit or sign | 11.10(d), (e) | 006, 007 |
 | SPEC-015 | Inventory and equipment status | Reagent lots (quantity, expiry) and calibration/maintenance status as schema-backed nodes. UI: inventory and equipment views | None | none | 009 |
 | SPEC-016 | Pre-flight checks v1 | Preflight endpoint plus a gate on `planned→running`: params vs schema, instrument calibration, lot expiry; results recorded; overrides need a reason. UI: problems panel | Expired lot or out-of-calibration instrument blocks the start unless overridden with a reason | 11.10(f) | 003, 015 |
+| SPEC-022 | Validation agents | Deterministic worklist and evidence gaps from a customer URS and traceability reports; MCP prompts that draft URS mapping, upgrade impact and PQ protocols; draft checks for completeness and citations; item-by-item QA decisions. UI: validation tab, draft review. Nothing here approves a document | Worklists and gaps; draft checks block commit; only a human with `qa` decides or commits; decisions bind to `items_sha256`; agent text is kept | 11.10(a), (e), (g); GAMP 5 | 004, 006, 007, 012, 014, 020 |
 
 ### Phase 5: Sovereignty and hardening
 
