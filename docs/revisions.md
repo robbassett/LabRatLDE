@@ -48,7 +48,7 @@ a blank one is `400`.
 ```
 proposed ──► committed    a human scientist; applies every item in one transaction
 proposed ──► rejected     a human scientist
-proposed ──► withdrawn    the author
+proposed ──► withdrawn    the author, if they still hold scientist
 ```
 
 `committed`, `rejected` and `withdrawn` are final. While a change set is
@@ -58,8 +58,8 @@ manifests. Its author may replace its title, reason and items with `PUT`.
 | Action | Who |
 |---|---|
 | Propose a change set | a principal with the `scientist` role: a human, an agent acting for one, or a service |
-| Replace the items of a proposal | its author, while it is `proposed` |
-| Withdraw a proposal | its author, while it is `proposed` |
+| Replace the items of a proposal | its author, while it is `proposed` and they still hold `scientist` |
+| Withdraw a proposal | its author, while it is `proposed` and they still hold `scientist`. If they no longer do, a scientist rejects it instead |
 | Commit or reject a proposal | a **human** with the `scientist` role. Agents and services get `403` |
 | Direct edit | a **human** with the `scientist` role, since it commits its own change set |
 
