@@ -534,7 +534,7 @@ func TestProtocolVersionsAreAppendOnly(t *testing.T) {
 		_, err = db.Pool.Exec(ctx, stmt, tenant)
 		wantCode(t, "owner: "+stmt, err, storage.CodeAppendOnly)
 	}
-	_, err = db.Pool.Exec(ctx, `TRUNCATE protocol_versions, runs`) // runs references it, so a bare TRUNCATE hits 0A000 first
+	_, err = db.Pool.Exec(ctx, `TRUNCATE protocol_versions, runs, signature_manifests, signatures`) // runs and the signature tables reference it, so a bare TRUNCATE hits 0A000 first
 	wantCode(t, "owner: TRUNCATE", err, storage.CodeAppendOnly)
 }
 
@@ -1339,4 +1339,279 @@ func TestNotesOnSealedNodes(t *testing.T) {
 		return err
 	})
 	wantCode(t, "edit frozen note with shadow tables", err, storage.CodeSealed)
+}
+
+// renamePrincipal sets a principal's display name as the owner, with its
+// principal.renamed event.
+func renamePrincipal(t *testing.T, db *storage.DB, tenant, id, name string) {
+	t.Helper()
+	ctx := context.Background()
+	err := db.WithOwner(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE principals SET display_name = $2 WHERE id = $1`, id, name); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, tenant, audit.Entry{
+			Actor: "system:test", Action: "principal.renamed", EntityType: "principal", EntityID: id,
+			Reason: "fixture", Payload: map[string]any{"to": name},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// newSigner is newPrincipal with a display name.
+func newSigner(t *testing.T, db *storage.DB, tenant, handle, displayName, kind string, roles ...string) storage.Principal {
+	t.Helper()
+	p := newPrincipal(t, db, tenant, handle, kind, roles...)
+	renamePrincipal(t, db, tenant, p.ID, displayName)
+	return p
+}
+
+// insertSignature inserts a manifest for manifestRunID with the given text,
+// then a signature on runID bound to it (its hash, last byte flipped when
+// flipHash), and appends signature.applied in tx. The signer is tx's principal.
+func insertSignature(ctx context.Context, tx pgx.Tx, tenant, runID, manifestRunID, manifestText string, flipHash bool, actor string, step int, meaning string) (string, error) {
+	var manifestID string
+	var sum []byte
+	if err := tx.QueryRow(ctx, `INSERT INTO signature_manifests (tenant_id, run_id, manifest)
+		VALUES ($1, $2, $3) RETURNING id, sha256`, tenant, manifestRunID, manifestText).Scan(&manifestID, &sum); err != nil {
+		return "", err
+	}
+	hexSum := fmt.Sprintf("%x", sum)
+	if flipHash {
+		sum[len(sum)-1] ^= 1
+	}
+	var id string
+	if err := tx.QueryRow(ctx, `INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id,
+			printed_name, manifest_id, manifest_sha256, reauth_at, reauth_method)
+		VALUES ($1, 'run', $2, $3, $4, lde_current_principal(), 'x', $5, $6, now(), 'dev') RETURNING id`,
+		tenant, runID, step, meaning, manifestID, sum).Scan(&id); err != nil {
+		return "", err
+	}
+	_, err := audit.Append(ctx, tx, tenant, audit.Entry{
+		Actor: actor, Action: "signature.applied", EntityType: "signature", EntityID: id, Reason: meaning,
+		Payload: map[string]any{"manifest_sha256": hexSum},
+	})
+	return id, err
+}
+
+// applySignature signs runID's step as tx's principal, with a correct manifest.
+func applySignature(ctx context.Context, tx pgx.Tx, tenant, runID, actor string, step int, meaning string) (string, error) {
+	return insertSignature(ctx, tx, tenant, runID, runID, fmt.Sprintf(`{"run_id":%q}`, runID), false, actor, step, meaning)
+}
+
+// trySign runs applySignature in its own transaction as p.
+func trySign(db *storage.DB, tenant string, p storage.Principal, runID string, step int, meaning string) (id string, err error) {
+	ctx := context.Background()
+	err = db.WithTenant(ctx, tenant, p, func(tx pgx.Tx) (err error) {
+		id, err = applySignature(ctx, tx, tenant, runID, "signer", step, meaning)
+		return err
+	})
+	return id, err
+}
+
+// signFixture is newSealFixture in a state, with its signers: alice
+// (scientist), bob (reviewer), dana (both) and bot, an agent with both roles
+// and a delegation from dana.
+type signFixture struct {
+	sealFixture
+	alice, bob, dana, bot storage.Principal
+}
+
+func newSignFixture(t *testing.T, db *storage.DB, state string) signFixture {
+	t.Helper()
+	f := signFixture{sealFixture: newSealFixture(t, db, state)}
+	f.alice = newSigner(t, db, f.tenant, "alice", "Alice Ng", "human", "scientist")
+	f.bob = newSigner(t, db, f.tenant, "bob", "Bob Ortiz", "human", "reviewer")
+	f.dana = newSigner(t, db, f.tenant, "dana", "Dana Ito", "human", "scientist", "reviewer")
+	f.bot = newSigner(t, db, f.tenant, "bot", "Bot", "agent", "scientist", "reviewer")
+	err := db.WithTenant(context.Background(), f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := delegate(context.Background(), tx, f.tenant, "it@lab", f.bot.ID, f.dana.ID, as(f.tenant).ID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// SPEC-008-R03
+func TestSignatureManifestBinding(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	f := newSignFixture(t, db, "completed")
+	var other string
+	err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		exp := newExperiment(t, tx, f.tenant, "other")
+		pv, _ := newProtocolVersion(t, tx, f.tenant, exp, 1, "# p\n")
+		var err error
+		other, err = insertRun(tx, f.tenant, exp, pv)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := fmt.Sprintf(`{"run_id":%q}`, f.runID)
+	for _, tc := range []struct {
+		name        string
+		manifestRun string
+		text        string
+		flip        bool
+		want        string
+	}{
+		{"hash with last byte flipped", f.runID, own, true, "LDE07"},
+		{"manifest row of another run", other, fmt.Sprintf(`{"run_id":%q}`, other), false, "LDE07"},
+		{"manifest text naming another run", f.runID, fmt.Sprintf(`{"run_id":%q}`, other), false, "LDE07"},
+		{"correct manifest and hash", f.runID, own, false, ""},
+	} {
+		err := db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
+			_, err := insertSignature(ctx, tx, f.tenant, f.runID, tc.manifestRun, tc.text, tc.flip, "alice", 1, "author")
+			return err
+		})
+		wantCode(t, tc.name, err, tc.want)
+	}
+}
+
+// SPEC-008-R05
+func TestSignaturePolicyOrder(t *testing.T) {
+	db := openTestDB(t)
+	f := newSignFixture(t, db, "completed")
+	_, err := trySign(db, f.tenant, f.bob, f.runID, 2, "review")
+	wantCode(t, "bob signs step 2 with nothing signed", err, "LDE07")
+	_, err = trySign(db, f.tenant, f.alice, f.runID, 2, "review")
+	wantCode(t, "alice signs step 2", err, "LDE07")
+	_, err = trySign(db, f.tenant, f.alice, f.runID, 1, "review")
+	wantCode(t, "alice signs step 1 as review", err, "LDE07")
+	_, err = trySign(db, f.tenant, f.bob, f.runID, 1, "author")
+	wantCode(t, "bob (no scientist) signs step 1", err, "LDE07")
+
+	running := newSignFixture(t, db, "running")
+	_, err = trySign(db, running.tenant, running.alice, running.runID, 1, "author")
+	wantCode(t, "alice signs a running run", err, "LDE07")
+	failed := newSignFixture(t, db, "failed")
+	_, err = trySign(db, failed.tenant, failed.alice, failed.runID, 1, "author")
+	wantCode(t, "alice signs a failed run", err, "")
+
+	_, err = trySign(db, f.tenant, f.alice, f.runID, 1, "author")
+	wantCode(t, "alice signs step 1", err, "")
+	_, err = trySign(db, f.tenant, f.bob, f.runID, 2, "review")
+	wantCode(t, "bob signs step 2", err, "")
+}
+
+// SPEC-008-R06
+func TestSignatureFourEyes(t *testing.T) {
+	db := openTestDB(t)
+	f := newSignFixture(t, db, "completed")
+	_, err := trySign(db, f.tenant, f.dana, f.runID, 1, "author")
+	wantCode(t, "dana signs step 1", err, "")
+	_, err = trySign(db, f.tenant, f.dana, f.runID, 2, "review")
+	wantCode(t, "dana signs step 2", err, "LDE07")
+	_, err = trySign(db, f.tenant, f.bob, f.runID, 2, "review")
+	wantCode(t, "bob signs step 2", err, "")
+}
+
+// SPEC-008-R07
+func TestAgentsAndServicesCannotSign(t *testing.T) {
+	db := openTestDB(t)
+	f := newSignFixture(t, db, "completed")
+	svc := newSigner(t, db, f.tenant, "svc", "Svc", "service", "scientist")
+	_, err := trySign(db, f.tenant, storage.Principal{ID: f.bot.ID, OnBehalfOf: f.dana.ID}, f.runID, 1, "author")
+	wantCode(t, "bot for dana signs", err, "LDE07")
+	_, err = trySign(db, f.tenant, svc, f.runID, 1, "author")
+	wantCode(t, "service signs", err, "LDE07")
+}
+
+// SPEC-008-R16
+func TestSignerNeedsPrintedName(t *testing.T) {
+	db := openTestDB(t)
+	f := newSignFixture(t, db, "completed")
+	eve := newPrincipal(t, db, f.tenant, "eve", "human", "scientist")
+	_, err := trySign(db, f.tenant, eve, f.runID, 1, "author")
+	wantCode(t, "blank display name signs", err, "LDE07")
+	renamePrincipal(t, db, f.tenant, eve.ID, "Eve Okafor")
+	id, err := trySign(db, f.tenant, eve, f.runID, 1, "author")
+	wantCode(t, "named signer signs", err, "")
+	var name string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT printed_name FROM signatures WHERE id = $1`, id).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Eve Okafor" {
+		t.Errorf("printed_name = %q, want %q", name, "Eve Okafor")
+	}
+}
+
+// SPEC-008-R11
+func TestSignaturesAreImmutable(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	f := newSignFixture(t, db, "completed")
+	sig, err := trySign(db, f.tenant, f.alice, f.runID, 1, "author")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, s := range []string{
+		`UPDATE signatures SET meaning = 'review'`,
+		`DELETE FROM signatures`,
+		`TRUNCATE signatures`,
+		`UPDATE signature_manifests SET manifest = 'x'`,
+		`DELETE FROM signature_manifests`,
+	} {
+		err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, s)
+			return err
+		})
+		wantCode(t, "lde_app: "+s, err, "42501")
+		_, err = db.Pool.Exec(ctx, s)
+		wantCode(t, "owner: "+s, err, "LDE03")
+	}
+
+	const invalidate = `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`
+
+	// A change set committed in an earlier transaction does not count.
+	var old string
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) (err error) {
+		old, err = commitChangeSet(ctx, tx, f.tenant, "it@lab", "earlier")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, invalidate, sig, old)
+		return err
+	})
+	wantCode(t, "invalidate with no change set committed in the transaction", err, "LDE07")
+
+	var cs string
+	err = db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+			VALUES ($1, 'fix', 'transcription error', 'alice', 'proposed', $2::jsonb) RETURNING id`,
+			f.tenant, fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}}]`, f.runID)).Scan(&cs)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, cs); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, invalidate, sig, cs); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
+			Actor: "it@lab", Action: "signature.invalidated", EntityType: "signature", EntityID: sig,
+			Reason: "transcription error",
+		})
+		return err
+	})
+	wantCode(t, "invalidate in a committed correction", err, "")
+
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, invalidate, sig, cs)
+		return err
+	})
+	wantCode(t, "invalidate twice", err, "LDE03")
 }
