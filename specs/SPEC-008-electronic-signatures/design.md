@@ -34,7 +34,7 @@ Every new trigger function has `SET search_path = pg_catalog, public, pg_temp` a
 
 "Valid" means `invalidated_at IS NULL`. `entity_id` has no FK because SPEC-010 extends `entity_type`; the guard checks the run exists.
 
-**`signatures_guard()`** (`BEFORE INSERT OR UPDATE OR DELETE … FOR EACH ROW`, and `signatures_no_truncate`). `DELETE` and `TRUNCATE` raise `LDE03`.
+**`signatures_reject_mutation()`**, attached as `signatures_guard` (`BEFORE INSERT OR UPDATE OR DELETE … FOR EACH ROW`, and `signatures_no_truncate`). `DELETE` and `TRUNCATE` raise `LDE03`.
 
 - **INSERT.** Checks, in order, each raising `LDE07` unless noted:
   1. As `lde_app`, set `NEW.signer_id := lde_current_principal()`. For every role, set `NEW.signed_at := clock_timestamp()` and clear the invalidation fields.
@@ -62,7 +62,7 @@ A run's seal covers its own node and the nodes it generated, as in `lineage_node
 
 **Audit:** `signatures_audited` is `lde_require_audit('signature', 'signature.applied')`; `signatures_invalidated_audited` is `lde_require_audit('signature', '', 'signature.invalidated')`, `WHEN (OLD.invalidated_at IS NULL AND NEW.invalidated_at IS NOT NULL)`.
 
-**RLS and grants:** enabled and forced, with `tenant_isolation` and `owner_maintenance` as in `0005`. `GRANT SELECT, INSERT ON signature_manifests`. `GRANT SELECT, INSERT, UPDATE (invalidated_at, invalidated_by_change_set) ON signatures`.
+**RLS and grants:** enabled and forced, with `tenant_isolation` and `owner_maintenance` as in `0005`. `GRANT SELECT, INSERT (tenant_id, run_id, manifest) ON signature_manifests`, so the database sets `id` and `created_at`. `GRANT SELECT, INSERT, UPDATE (invalidated_at, invalidated_by_change_set) ON signatures`.
 
 ### Sealing and run state (migration `0017_signature_seal`)
 
@@ -191,3 +191,4 @@ Existing tests that change with this spec:
 | 2026-11-01 | `display_name` becomes correctable by an admin, audited, and a blank one blocks signing. This amends the `principals` immutability of SPEC-006; handles and subjects stay immutable | §11.50 needs a printed name, it defaults to blank, and `(issuer, subject)` is unique, so a principal with a blank or outdated name could never be fixed. Signatures keep the name they were signed with | Falling back to the handle, which isn't a printed name |
 | 2026-11-01 | `signatures` keeps `entity_type`/`entity_id`, though only `run` is allowed now | SPEC-010 is a specified second use | A `run_id` column that SPEC-010 would have to migrate |
 | 2026-11-02 | Experiment inserts by lde_app are forced to the default policy; the gxp audit event must carry a reason; run inserts clear signed_from | Found by integrity review of 0015: the column DEFAULT alone let lde_app insert a weaker policy (bypassing R15), R15 requires a reason, and signed_from must start empty | Relying on Go |
+| 2026-11-03 | The signature guard function is `signatures_reject_mutation()`, with the trigger named `signatures_guard`, as for notes. `lde_app` inserts manifests through a column grant. From the integrity review of tasks 2.1-2.7 | Matches the `*_reject_*` naming. A client could otherwise choose a manifest's `created_at` | A trigger stamping `created_at`, which is more code for the same result |

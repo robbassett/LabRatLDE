@@ -244,5 +244,5 @@ BEGIN
     EXECUTE format('CREATE POLICY owner_maintenance ON signatures TO %I USING (true) WITH CHECK (true)', current_user);
 END;
 $$;
-GRANT SELECT, INSERT ON signature_manifests TO lde_app;
+GRANT SELECT, INSERT (tenant_id, run_id, manifest) ON signature_manifests TO lde_app;
 GRANT SELECT, INSERT, UPDATE (invalidated_at, invalidated_by_change_set) ON signatures TO lde_app;

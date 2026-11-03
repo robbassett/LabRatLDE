@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -536,6 +537,10 @@ func TestProtocolVersionsAreAppendOnly(t *testing.T) {
 	}
 	_, err = db.Pool.Exec(ctx, `TRUNCATE protocol_versions, runs, signature_manifests, signatures`) // runs and the signature tables reference it, so a bare TRUNCATE hits 0A000 first
 	wantCode(t, "owner: TRUNCATE", err, storage.CodeAppendOnly)
+	// The signature tables raise LDE03 too, so check the error is this table's.
+	if msg := storage.ErrorMessage(err); !strings.Contains(msg, "protocol") {
+		t.Errorf("TRUNCATE stopped by another table's trigger: %s", msg)
+	}
 }
 
 // SPEC-003-R03
@@ -1540,6 +1545,40 @@ func TestSignerNeedsPrintedName(t *testing.T) {
 	if name != "Eve Okafor" {
 		t.Errorf("printed_name = %q, want %q", name, "Eve Okafor")
 	}
+
+	// What the database stamps can't be chosen: alice naming dana as the signer,
+	// with a forged name and time, still signs as herself, now.
+	forged := newSignFixture(t, db, "completed")
+	ctx := context.Background()
+	err = db.WithTenant(ctx, forged.tenant, forged.alice, func(tx pgx.Tx) error {
+		var manifestID string
+		var sum []byte
+		if err := tx.QueryRow(ctx, `INSERT INTO signature_manifests (tenant_id, run_id, manifest)
+			VALUES ($1, $2, $3) RETURNING id, sha256`, forged.tenant, forged.runID, fmt.Sprintf(`{"run_id":%q}`, forged.runID)).Scan(&manifestID, &sum); err != nil {
+			return err
+		}
+		var sig string
+		if err := tx.QueryRow(ctx, `INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id,
+				printed_name, signed_at, manifest_id, manifest_sha256, reauth_at, reauth_method)
+			VALUES ($1, 'run', $2, 1, 'author', $3, 'Forged', '2000-01-01', $4, $5, now(), 'dev') RETURNING id`,
+			forged.tenant, forged.runID, forged.dana.ID, manifestID, sum).Scan(&sig); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, forged.tenant, audit.Entry{
+			Actor: "alice", Action: "signature.applied", EntityType: "signature", EntityID: sig, Reason: "author",
+		})
+		return err
+	})
+	wantCode(t, "alice signs naming dana", err, "")
+	var signer string
+	var year int
+	if err := db.Pool.QueryRow(ctx, `SELECT signer_id, printed_name, extract(year FROM signed_at)::int FROM signatures
+		WHERE tenant_id = $1 AND entity_id = $2`, forged.tenant, forged.runID).Scan(&signer, &name, &year); err != nil {
+		t.Fatal(err)
+	}
+	if signer != forged.alice.ID || name != "Alice Ng" || year == 2000 {
+		t.Errorf("stamped signer %s, name %q, year %d; want alice (%s), Alice Ng, not 2000", signer, name, year, forged.alice.ID)
+	}
 }
 
 // SPEC-008-R11
@@ -1552,12 +1591,13 @@ func TestSignaturesAreImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	scoped := fmt.Sprintf(`WHERE tenant_id = '%s'`, f.tenant)
 	for _, s := range []string{
-		`UPDATE signatures SET meaning = 'review'`,
-		`DELETE FROM signatures`,
-		`TRUNCATE signatures`,
-		`UPDATE signature_manifests SET manifest = 'x'`,
-		`DELETE FROM signature_manifests`,
+		`UPDATE signatures SET meaning = 'review' ` + scoped,
+		`DELETE FROM signatures ` + scoped,
+		`UPDATE signature_manifests SET manifest = 'x' ` + scoped,
+		`DELETE FROM signature_manifests ` + scoped,
+		`TRUNCATE signature_manifests, signatures`, // signatures references manifests, so a bare TRUNCATE hits 0A000 first
 	} {
 		err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, s)
@@ -1569,11 +1609,27 @@ func TestSignaturesAreImmutable(t *testing.T) {
 	}
 
 	const invalidate = `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`
+	const commit = `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`
+	propose := func(items string) string {
+		t.Helper()
+		var id string
+		err := db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+				VALUES ($1, 'fix', 'transcription error', 'alice', 'proposed', $2::jsonb) RETURNING id`,
+				f.tenant, items).Scan(&id)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	touchesRun := fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}}]`, f.runID)
 
-	// A change set committed in an earlier transaction does not count.
-	var old string
-	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) (err error) {
-		old, err = commitChangeSet(ctx, tx, f.tenant, "it@lab", "earlier")
+	// A change set that touches the run but was committed in an earlier
+	// transaction does not count: this pins the xmin check.
+	old := propose(touchesRun)
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, commit, old)
 		return err
 	})
 	if err != nil {
@@ -1583,19 +1639,23 @@ func TestSignaturesAreImmutable(t *testing.T) {
 		_, err := tx.Exec(ctx, invalidate, sig, old)
 		return err
 	})
-	wantCode(t, "invalidate with no change set committed in the transaction", err, "LDE07")
+	wantCode(t, "invalidate with a change set committed earlier", err, "LDE07")
 
-	var cs string
-	err = db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
-			VALUES ($1, 'fix', 'transcription error', 'alice', 'proposed', $2::jsonb) RETURNING id`,
-			f.tenant, fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}}]`, f.runID)).Scan(&cs)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// One committed in this transaction that touches another record does not
+	// count either: this pins the touched-runs check.
+	elsewhere := propose(fmt.Sprintf(`[{"op":"update_node","node_id":%q,"label":"x"}]`, f.s))
 	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, cs); err != nil {
+		if _, err := tx.Exec(ctx, commit, elsewhere); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, invalidate, sig, elsewhere)
+		return err
+	})
+	wantCode(t, "invalidate with a change set that touches another record", err, "LDE07")
+
+	cs := propose(touchesRun)
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, commit, cs); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, invalidate, sig, cs); err != nil {

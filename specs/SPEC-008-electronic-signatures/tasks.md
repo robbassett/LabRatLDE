@@ -23,7 +23,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 2: Signature records
 
-- [ ] 2.1 Test: a signature binds to its manifest (SPEC-008-R03)
+- [x] 2.1 Test: a signature binds to its manifest (SPEC-008-R03)
   - Requirements: SPEC-008-R03
   - Files: `internal/storage/integration_test.go`
   - Do: add the three helpers above. `TestSignatureManifestBinding`, as alice, with the R03 examples, each checked with `wantCode`:
@@ -34,7 +34,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Comment `// SPEC-008-R03`.
   - Verify: `make test-integration TEST_DB=…` fails only on the new test (`signature_manifests` doesn't exist).
   - Integrity: yes
-- [ ] 2.2 Test: signing follows the policy (SPEC-008-R05)
+- [x] 2.2 Test: signing follows the policy (SPEC-008-R05)
   - Requirements: SPEC-008-R05
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSignaturePolicyOrder`, with `applySignature` and these cases:
@@ -48,25 +48,25 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Comment `// SPEC-008-R05`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 2.3 Test: no person signs twice (SPEC-008-R06)
+- [x] 2.3 Test: no person signs twice (SPEC-008-R06)
   - Requirements: SPEC-008-R06
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSignatureFourEyes`: dana signs step 1, dana signing step 2 fails with `LDE07`, and bob signing step 2 succeeds. Comment `// SPEC-008-R06`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 2.4 Test: agents and services can't sign (SPEC-008-R07)
+- [x] 2.4 Test: agents and services can't sign (SPEC-008-R07)
   - Requirements: SPEC-008-R07
   - Files: `internal/storage/integration_test.go`
   - Do: `TestAgentsAndServicesCannotSign`: `storage.Principal{ID: bot.ID, OnBehalfOf: dana.ID}` signing step 1 fails with `LDE07`, and a service principal holding `scientist`, with a display name, fails with `LDE07`. Comment `// SPEC-008-R07`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 2.5 Test: a signer needs a printed name (SPEC-008-R16)
+- [x] 2.5 Test: a signer needs a printed name (SPEC-008-R16)
   - Requirements: SPEC-008-R16
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSignerNeedsPrintedName`: `newPrincipal` (blank display name; scientist) signing step 1 fails with `LDE07`. After an owner rename with its audit event, the same call succeeds, and `printed_name` is the new name, whatever the statement passed. Comment `// SPEC-008-R16`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 2.6 Test: signatures are immutable (SPEC-008-R11)
+- [x] 2.6 Test: signatures are immutable (SPEC-008-R11)
   - Requirements: SPEC-008-R11
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSignaturesAreImmutable`, with alice's step-1 signature `sig` and its manifest:
@@ -78,7 +78,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Comment `// SPEC-008-R11`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 2.7 Migration `0016_signatures`
+- [x] 2.7 Migration `0016_signatures`
   - Requirements: SPEC-008-R03, SPEC-008-R05, SPEC-008-R06, SPEC-008-R07, SPEC-008-R11, SPEC-008-R16
   - Files: `internal/storage/migrations/0016_signatures.sql`, `internal/storage/postgres.go`, `cmd/server/iq.go`
   - Do: everything in design §2 "Signatures". `storage.CodeSignature = "LDE07"`, added to `IsConflict`. Add `signatures_guard`, `signatures_no_truncate`, `signature_manifests_append_only`, `signature_manifests_no_truncate`, `signatures_audited` and `signatures_invalidated_audited` to `iqTriggers`.
