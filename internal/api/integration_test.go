@@ -667,7 +667,11 @@ func TestSealedCommitConflicts(t *testing.T) {
 	}
 	transition(rid, "running", "")
 	transition(rid, "completed", "")
-	transition(rid, "signed", "approved")
+	// SPEC-008-R08: lde_app can't sign through the transitions endpoint any
+	// more. The owner sets signed, which leaves no signature rows.
+	if _, err := db.Pool.Exec(context.Background(), `UPDATE runs SET state = 'signed' WHERE id = $1`, rid); err != nil {
+		t.Fatal(err)
+	}
 	transition(aid, "aborted", "contaminated")
 
 	for _, id := range []string{rid, aid} {

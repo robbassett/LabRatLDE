@@ -84,7 +84,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
   - Do: everything in design §2 "Signatures". `storage.CodeSignature = "LDE07"`, added to `IsConflict`. Add `signatures_guard`, `signatures_no_truncate`, `signature_manifests_append_only`, `signature_manifests_no_truncate`, `signatures_audited` and `signatures_invalidated_audited` to `iqTriggers`.
   - Verify: `make test-integration TEST_DB=…` passes, including 2.1–2.6.
   - Integrity: yes
-- [ ] 2.8 Test: the first signature seals, the last signs (SPEC-008-R08)
+- [x] 2.8 Test: the first signature seals, the last signs (SPEC-008-R08)
   - Requirements: SPEC-008-R08
   - Files: `internal/storage/integration_test.go`
   - Do:
@@ -97,7 +97,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Extend `TestSealedSet` (SPEC-002-R01): a completed run with one signature is sealed for `R` and `D`, and not for `S`.
   - Verify: fails only on `TestFirstSignatureSeals` and the new `TestSealedSet` case.
   - Integrity: yes
-- [ ] 2.9 Migration `0017_signature_seal`
+- [x] 2.9 Migration `0017_signature_seal`
   - Requirements: SPEC-008-R08
   - Files: `internal/storage/migrations/0017_signature_seal.sql`, `internal/storage/integration_test.go` (existing tests only), `internal/api/integration_test.go` (existing test only), `cmd/server/iq.go`
   - Do:
@@ -193,6 +193,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
   - Files: `internal/api/signatures.go`, `internal/api/server.go`, `internal/identity/identity.go`, `internal/api/identity.go`
   - Do:
     - `POST` and `GET /v1/runs/{id}/signatures` as design §2 "Signing transaction" and "Re-authentication".
+    - Extract `audit.LockChain(ctx, tx, tenantID) error` from the first statement of `audit.Append` (the same lock, no change to the digest; `Append` calls it). Signing calls it before locking the run, as the design says.
     - `checkReauth(ctx, r, tx, p, token) (at time.Time, method string, err error)`, checked before anything is written. Unknown claims and all token failures are `unauthorized`.
     - A blank `meaning` or malformed hash is 400.
     - Dev principals get `DisplayName: handle` in `createDevPrincipal`.
@@ -221,7 +222,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 - [ ] 4.10 Transitions refuse `signed`
   - Requirements: SPEC-008-R14
   - Files: `internal/api/runs.go`, `internal/domain/run.go`
-  - Do: in `transitionRun`, `to: signed` is `badRequest` naming `POST /v1/runs/{id}/signatures`. Remove the `TODO(part11)`, and the signing branch of `appendRunEvent`. Move `run.signed` to `signatures.go`. Update the comments on `RunState` and `Terminal`: only a committed correction reopens a signed run.
+  - Do: `transitionRun` calls `audit.LockChain` before its `FOR UPDATE`, for the lock order in design §2. In `transitionRun`, `to: signed` is `badRequest` naming `POST /v1/runs/{id}/signatures`. Remove the `TODO(part11)`, and the signing branch of `appendRunEvent`. Move `run.signed` to `signatures.go`. Update the comments on `RunState` and `Terminal`: only a committed correction reopens a signed run.
   - Verify: `curl` with `to: signed` is 400. `make test-integration TEST_DB=…` passes.
 - [ ] 4.11 Test: runs show their signatures (SPEC-008-R12)
   - Requirements: SPEC-008-R12

@@ -319,6 +319,24 @@ func TestSealedSet(t *testing.T) {
 			}
 		}
 	}
+
+	// SPEC-008-R08: one valid signature seals a completed run.
+	f := newSignFixture(t, db, "completed")
+	if _, err := trySign(db, f.tenant, f.alice, f.runID, 1, "author"); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		node string
+		want bool
+	}{"R": {f.r, true}, "D": {f.d, true}, "S": {f.s, false}} {
+		var got bool
+		err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT lineage_node_sealed($1)`, c.node).Scan(&got)
+		})
+		if err != nil || got != c.want {
+			t.Errorf("completed run with one signature: sealed(%s) = %v, want %v (err %v)", name, got, c.want, err)
+		}
+	}
 }
 
 // SPEC-002-R02, SPEC-002-R03, SPEC-002-R04
@@ -837,8 +855,9 @@ func TestRoleGatesOnLabRecords(t *testing.T) {
 			return err
 		})
 	}
-	wantCode(t, "alice (scientist) signs", sign(alice, run1), storage.CodeRoleDenied)
-	wantCode(t, "bob (reviewer) signs", sign(bob, run1), "")
+	// SPEC-008-R08: setting signed is no longer a role question; signing does it.
+	wantCode(t, "alice (scientist) signs", sign(alice, run1), storage.CodeSignature)
+	wantCode(t, "bob (reviewer) signs", sign(bob, run1), storage.CodeSignature)
 	wantCode(t, "bob (reviewer) creates a node", addNode(bob), storage.CodeRoleDenied)
 	wantCode(t, "nobody creates a node", addNode(storage.Principal{}), storage.CodeRoleDenied)
 
@@ -851,7 +870,7 @@ func TestRoleGatesOnLabRecords(t *testing.T) {
 	}
 	botForAlice := storage.Principal{ID: bot.ID, OnBehalfOf: alice.ID}
 	wantCode(t, "bot for alice creates a node", addNode(botForAlice), "")
-	wantCode(t, "bot for alice signs", sign(botForAlice, run2), storage.CodeRoleDenied)
+	wantCode(t, "bot for alice signs", sign(botForAlice, run2), storage.CodeSignature)
 }
 
 // SPEC-006-R06: signing is the only change a reviewer may make.
@@ -886,7 +905,9 @@ func TestSigningChangesNothingElse(t *testing.T) {
 	}
 	const signAndEdit = `UPDATE runs SET state = 'signed', params = '{"tampered": true}' WHERE id = $1`
 	const signOnly = `UPDATE runs SET state = 'signed', started_at = started_at, finished_at = finished_at WHERE id = $1`
-	wantCode(t, "bob (reviewer) signs and edits params", exec(bob, signAndEdit, runs[0]), storage.CodeRoleDenied)
+	// SPEC-008-R08: the signatures table is the only way to `signed`, so every
+	// principal is refused, whatever else the statement changes.
+	wantCode(t, "bob (reviewer) signs and edits params", exec(bob, signAndEdit, runs[0]), storage.CodeSignature)
 	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
 		if _, err := commitChangeSet(ctx, tx, tenant, "it@lab", "correct params at sign-off"); err != nil {
 			return err
@@ -894,8 +915,8 @@ func TestSigningChangesNothingElse(t *testing.T) {
 		_, err := tx.Exec(ctx, signAndEdit, runs[1])
 		return err
 	})
-	wantCode(t, "it@lab (scientist and reviewer) signs and edits params", err, "")
-	wantCode(t, "bob (reviewer) signs, rewriting unchanged columns", exec(bob, signOnly, runs[2]), "")
+	wantCode(t, "it@lab (scientist and reviewer) signs and edits params", err, storage.CodeSignature)
+	wantCode(t, "bob (reviewer) signs, rewriting unchanged columns", exec(bob, signOnly, runs[2]), storage.CodeSignature)
 }
 
 // commitChangeSet takes tenant, author and reason. It inserts a change set
@@ -1674,4 +1695,167 @@ func TestSignaturesAreImmutable(t *testing.T) {
 		return err
 	})
 	wantCode(t, "invalidate twice", err, "LDE03")
+}
+
+// SPEC-008-R08
+func TestFirstSignatureSeals(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	runRow := func(f signFixture) (state string, signedFrom *string) {
+		t.Helper()
+		if err := db.Pool.QueryRow(ctx, `SELECT state, signed_from FROM runs WHERE id = $1`, f.runID).Scan(&state, &signedFrom); err != nil {
+			t.Fatal(err)
+		}
+		return state, signedFrom
+	}
+
+	f := newSignFixture(t, db, "completed")
+	if _, err := trySign(db, f.tenant, f.alice, f.runID, 1, "author"); err != nil {
+		t.Fatal(err)
+	}
+	err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		var id string
+		if err := tx.QueryRow(ctx, insertNode, f.tenant, "reagent").Scan(&id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, insertEdge, f.tenant, id, f.r, "used")
+		return err
+	})
+	wantCode(t, "new input to a run with one signature", err, storage.CodeSealed)
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		if _, err := commitChangeSet(ctx, tx, f.tenant, "it@lab", "edit sealed dataset"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE lineage_nodes SET attrs = '{"x":1}' WHERE id = $1`, f.d)
+		return err
+	})
+	wantCode(t, "attrs update of a dataset of a run with one signature", err, storage.CodeSealed)
+	var annotation bool
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO notes (tenant_id, node_id, body, created_by)
+			VALUES ($1, $2, 'looks fine', 'it@lab') RETURNING annotation`, f.tenant, f.r).Scan(&annotation)
+	})
+	wantCode(t, "annotation on a run with one signature", err, "")
+	if !annotation {
+		t.Error("note after the first signature: want annotation = true")
+	}
+	if state, from := runRow(f); state != "completed" || from != nil {
+		t.Errorf("after step 1: state %q, signed_from %v; want completed, nil", state, from)
+	}
+
+	// The seal can't be lifted by moving the run row out from under it.
+	var decoy string
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, insertNode, f.tenant, "run").Scan(&decoy)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []struct{ name, stmt string }{
+		{"repoint node_id", `UPDATE runs SET node_id = '` + decoy + `' WHERE id = $1`},
+		{"back to running", `UPDATE runs SET state = 'running' WHERE id = $1`},
+		{"completed to failed", `UPDATE runs SET state = 'failed' WHERE id = $1`},
+		{"abort", `UPDATE runs SET state = 'aborted' WHERE id = $1`},
+		{"rewrite finished_at", `UPDATE runs SET finished_at = now() WHERE id = $1`},
+		{"rewrite created_by", `UPDATE runs SET created_by = 'forged' WHERE id = $1`},
+	} {
+		err := db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, s.stmt, f.runID)
+			return err
+		})
+		wantCode(t, s.name+" with one signature", err, storage.CodeSealed)
+	}
+	aborted := newSealFixture(t, db, "aborted")
+	err = db.WithTenant(ctx, aborted.tenant, as(aborted.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE runs SET state = 'completed' WHERE id = $1`, aborted.runID)
+		return err
+	})
+	wantCode(t, "lde_app reopens an aborted run", err, storage.CodeSealed)
+
+	// SPEC-008-R10: invalidating one of two signatures fails at commit.
+	partial := newSignFixture(t, db, "completed")
+	step1, err := trySign(db, partial.tenant, partial.alice, partial.runID, 1, "author")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trySign(db, partial.tenant, partial.bob, partial.runID, 2, "review"); err != nil {
+		t.Fatal(err)
+	}
+	var fix string
+	err = db.WithTenant(ctx, partial.tenant, partial.alice, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+			VALUES ($1, 'fix', 'typo', 'alice', 'proposed', $2::jsonb) RETURNING id`,
+			partial.tenant, fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}}]`, partial.runID)).Scan(&fix)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, partial.tenant, as(partial.tenant), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, fix); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`, step1, fix); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, partial.tenant, audit.Entry{
+			Actor: "it@lab", Action: "signature.invalidated", EntityType: "signature", EntityID: step1, Reason: "typo",
+		})
+		return err
+	})
+	wantCode(t, "invalidating one of two signatures", err, "LDE07")
+
+	if _, err := trySign(db, f.tenant, f.bob, f.runID, 2, "review"); err != nil {
+		t.Fatal(err)
+	}
+	if state, from := runRow(f); state != "signed" || from == nil || *from != "completed" {
+		t.Errorf("after step 2: state %q, signed_from %v; want signed, completed", state, from)
+	}
+
+	failed := newSignFixture(t, db, "failed")
+	for _, s := range []struct {
+		p       storage.Principal
+		step    int
+		meaning string
+	}{{failed.alice, 1, "author"}, {failed.bob, 2, "review"}} {
+		if _, err := trySign(db, failed.tenant, s.p, failed.runID, s.step, s.meaning); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, from := runRow(failed); state != "signed" || from == nil || *from != "failed" {
+		t.Errorf("failed run after both signatures: state %q, signed_from %v; want signed, failed", state, from)
+	}
+
+	// No statement by lde_app sets signed directly.
+	fresh := newSignFixture(t, db, "completed")
+	for _, p := range []storage.Principal{fresh.alice, fresh.bob} {
+		err := db.WithTenant(ctx, fresh.tenant, p, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE runs SET state = 'signed' WHERE id = $1`, fresh.runID)
+			return err
+		})
+		wantCode(t, "UPDATE state = signed as "+p.ID, err, "LDE07")
+	}
+	err = db.WithTenant(ctx, fresh.tenant, as(fresh.tenant), func(tx pgx.Tx) error {
+		var exp, pv string
+		if err := tx.QueryRow(ctx, `SELECT experiment_id, protocol_version_id FROM runs WHERE id = $1`, fresh.runID).Scan(&exp, &pv); err != nil {
+			return err
+		}
+		var node string
+		if err := tx.QueryRow(ctx, insertNode, fresh.tenant, "run").Scan(&node); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO runs (tenant_id, experiment_id, node_id, protocol_version_id, state, created_by)
+			VALUES ($1, $2, $3, $4, 'signed', 'it@lab')`, fresh.tenant, exp, node, pv)
+		return err
+	})
+	wantCode(t, "INSERT a run in state signed", err, "LDE07")
+
+	// A signed run does not leave signed without an invalidation.
+	const reopen = `UPDATE runs SET state = 'completed' WHERE id = $1`
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, reopen, f.runID)
+		return err
+	})
+	wantCode(t, "lde_app reopens a signed run", err, "LDE03")
+	_, err = db.Pool.Exec(ctx, reopen, f.runID)
+	wantCode(t, "owner reopens a signed run", err, "LDE03")
 }
