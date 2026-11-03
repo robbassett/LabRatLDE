@@ -1752,7 +1752,6 @@ func TestFirstSignatureSeals(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range []struct{ name, stmt string }{
-		{"repoint node_id", `UPDATE runs SET node_id = '` + decoy + `' WHERE id = $1`},
 		{"back to running", `UPDATE runs SET state = 'running' WHERE id = $1`},
 		{"completed to failed", `UPDATE runs SET state = 'failed' WHERE id = $1`},
 		{"abort", `UPDATE runs SET state = 'aborted' WHERE id = $1`},
@@ -1765,6 +1764,11 @@ func TestFirstSignatureSeals(t *testing.T) {
 		})
 		wantCode(t, s.name+" with one signature", err, storage.CodeSealed)
 	}
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE runs SET node_id = $2 WHERE id = $1`, f.runID, decoy)
+		return err
+	})
+	wantCode(t, "repoint node_id with one signature", err, storage.CodeAppendOnly)
 	aborted := newSealFixture(t, db, "aborted")
 	err = db.WithTenant(ctx, aborted.tenant, as(aborted.tenant), func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE runs SET state = 'completed' WHERE id = $1`, aborted.runID)
@@ -1858,4 +1862,447 @@ func TestFirstSignatureSeals(t *testing.T) {
 	wantCode(t, "lde_app reopens a signed run", err, "LDE03")
 	_, err = db.Pool.Exec(ctx, reopen, f.runID)
 	wantCode(t, "owner reopens a signed run", err, "LDE03")
+}
+
+// SPEC-008-R09
+func TestCorrectionCommitRoles(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	f := newSignFixture(t, db, "completed")
+	carol := newSigner(t, db, f.tenant, "carol", "Carol Wu", "human", "scientist")
+	for _, s := range []struct {
+		p       storage.Principal
+		step    int
+		meaning string
+	}{{f.alice, 1, "author"}, {f.bob, 2, "review"}} {
+		if _, err := trySign(db, f.tenant, s.p, f.runID, s.step, s.meaning); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	touchesRun := fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{"x":1}}]`, f.runID)
+	propose := func(p storage.Principal, author, items string) string {
+		t.Helper()
+		var id string
+		err := db.WithTenant(ctx, f.tenant, p, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+				VALUES ($1, 'fix', 'transcription error', $2, 'proposed', $3::jsonb) RETURNING id`,
+				f.tenant, author, items).Scan(&id)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	const commit = `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`
+	commitAs := func(p storage.Principal, id string) error {
+		return db.WithTenant(ctx, f.tenant, p, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, commit, id)
+			return err
+		})
+	}
+	state := func(id string) string {
+		t.Helper()
+		var s string
+		if err := db.Pool.QueryRow(ctx, `SELECT state FROM change_sets WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	mine := propose(f.alice, "alice", touchesRun)
+	wantCode(t, "alice commits her own correction", commitAs(f.alice, mine), "LDE07")
+	wantCode(t, "another scientist commits", commitAs(carol, mine), "LDE07")
+
+	viaBot := propose(storage.Principal{ID: f.bot.ID, OnBehalfOf: f.dana.ID}, "bot", touchesRun)
+	wantCode(t, "dana commits what her bot proposed", commitAs(f.dana, viaBot), "LDE07")
+
+	err := db.WithTenant(ctx, f.tenant, f.dana, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items, decision_reason)
+			VALUES ($1, 'fix', 'direct', 'dana', 'committed', $2::jsonb, 'direct')`, f.tenant, touchesRun)
+		return err
+	})
+	wantCode(t, "scientist and reviewer inserts a committed correction", err, "LDE07")
+	if s, v := state(mine), state(viaBot); s != "proposed" || v != "proposed" {
+		t.Fatalf("after the failures: states %q and %q, want proposed", s, v)
+	}
+
+	// Bob is a reviewer but not a scientist: committing, invalidating and
+	// applying the change are his to do.
+	err = db.WithTenant(ctx, f.tenant, f.bob, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, commit, mine); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT id FROM signatures WHERE entity_id = $1 AND invalidated_at IS NULL`, f.runID)
+		if err != nil {
+			return err
+		}
+		var sigs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			sigs = append(sigs, id)
+		}
+		rows.Close()
+		if rows.Err() != nil {
+			return rows.Err()
+		}
+		for _, id := range sigs {
+			if _, err := tx.Exec(ctx, `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`, id, mine); err != nil {
+				return err
+			}
+			if _, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
+				Actor: "bob", Action: "signature.invalidated", EntityType: "signature", EntityID: id, Reason: "transcription error",
+			}); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.change_set_id', $1, true)`, mine); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE runs SET params = '{"x":1}' WHERE id = $1`, f.runID)
+		return err
+	})
+	wantCode(t, "bob commits, invalidates and applies the correction", err, "")
+	var runState, params string
+	if err := db.Pool.QueryRow(ctx, `SELECT state, params::text FROM runs WHERE id = $1`, f.runID).Scan(&runState, &params); err != nil {
+		t.Fatal(err)
+	}
+	if runState != "completed" || params != `{"x": 1}` || state(mine) != "committed" {
+		t.Errorf("after the correction: run %q, params %s, change set %q", runState, params, state(mine))
+	}
+
+	err = db.WithTenant(ctx, f.tenant, f.bob, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE lineage_nodes SET label = 'x' WHERE id = $1`, f.r)
+		return err
+	})
+	wantCode(t, "bob edits a node with no committed change set", err, "LDE05")
+
+	// A note on a sealed node touches nothing the seal covers: a scientist
+	// alone commits it, and no signature is invalidated.
+	if _, err := trySign(db, f.tenant, f.alice, f.runID, 1, "author"); err != nil {
+		t.Fatal(err)
+	}
+	note := propose(f.alice, "alice", fmt.Sprintf(`[{"op":"add_note","node_id":%q,"body":"looks fine"}]`, f.r))
+	wantCode(t, "scientist commits an add_note change set", commitAs(carol, note), "")
+	var valid int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM signatures WHERE entity_id = $1 AND invalidated_at IS NULL`, f.runID).Scan(&valid); err != nil {
+		t.Fatal(err)
+	}
+	if valid != 1 || state(note) != "committed" {
+		t.Errorf("after add_note: %d valid signatures, change set %q; want 1, committed", valid, state(note))
+	}
+
+	// An agent with two delegators can't move a proposal to the other human.
+	erin := newSigner(t, db, f.tenant, "erin", "Erin Vale", "human", "scientist", "reviewer")
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		_, err := delegate(ctx, tx, f.tenant, "it@lab", f.bot.ID, erin.ID, as(f.tenant).ID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forErin := propose(storage.Principal{ID: f.bot.ID, OnBehalfOf: erin.ID}, "bot", `[]`)
+	err = db.WithTenant(ctx, f.tenant, storage.Principal{ID: f.bot.ID, OnBehalfOf: f.dana.ID}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE change_sets SET items = $2::jsonb WHERE id = $1`, forErin, touchesRun)
+		return err
+	})
+	wantCode(t, "bot replaces erin's proposal acting for dana", err, "LDE05")
+
+	// A run's node never changes: moving it would change which run a change set touches.
+	var q string
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) error {
+		exp := newExperiment(t, tx, f.tenant, "unrelated")
+		pv, _ := newProtocolVersion(t, tx, f.tenant, exp, 1, "# p\n")
+		var err error
+		q, err = insertRun(tx, f.tenant, exp, pv)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE runs SET node_id = $2 WHERE id = $1`, q, f.d)
+		return err
+	})
+	wantCode(t, "scientist repoints a run's node", err, "LDE03")
+
+	// A change set committed before the run was signed isn't a reviewed correction.
+	early := newSignFixture(t, db, "completed")
+	err = db.WithTenant(ctx, early.tenant, early.alice, func(tx pgx.Tx) error {
+		var cs string
+		if err := tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items, decision_reason)
+			VALUES ($1, 'fix', 'early', 'alice', 'committed', $2::jsonb, 'early') RETURNING id`, early.tenant,
+			fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}}]`, early.runID)).Scan(&cs); err != nil {
+			return err
+		}
+		sig, err := applySignature(ctx, tx, early.tenant, early.runID, "alice", 1, "author")
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`, sig, cs)
+		return err
+	})
+	wantCode(t, "invalidate with a change set committed before signing", err, "LDE07")
+
+	// What a reviewed correction unlocks is limited to its own work.
+	g := newSignFixture(t, db, "completed")
+	sig1, err := trySign(db, g.tenant, g.alice, g.runID, 1, "author")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig2, err := trySign(db, g.tenant, g.bob, g.runID, 2, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var other string
+	err = db.WithTenant(ctx, g.tenant, as(g.tenant), func(tx pgx.Tx) error {
+		exp := newExperiment(t, tx, g.tenant, "other")
+		pv, _ := newProtocolVersion(t, tx, g.tenant, exp, 1, "# p\n")
+		var err error
+		other, err = insertRun(tx, g.tenant, exp, pv)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fix string
+	err = db.WithTenant(ctx, g.tenant, g.alice, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+			VALUES ($1, 'fix', 'typo', 'alice', 'proposed', $2::jsonb) RETURNING id`, g.tenant,
+			fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{"x":2}}]`, g.runID)).Scan(&fix)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each case rolls back, so the correction stays available to the next.
+	corrected := func(stmt string, args ...any) error {
+		return db.WithTenant(ctx, g.tenant, g.bob, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, fix); err != nil {
+				return err
+			}
+			for _, id := range []string{sig1, sig2} {
+				if _, err := tx.Exec(ctx, `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`, id, fix); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.change_set_id', $1, true)`, fix); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, stmt, args...)
+			return err
+		})
+	}
+	wantCode(t, "correction: abort the run", corrected(`UPDATE runs SET state = 'aborted' WHERE id = $1`, g.runID), "LDE05")
+	wantCode(t, "correction: params of an unrelated run", corrected(`UPDATE runs SET params = '{"x":9}' WHERE id = $1`, other), "LDE05")
+	wantCode(t, "correction: abort an unrelated run", corrected(`UPDATE runs SET state = 'aborted' WHERE id = $1`, other), "LDE05")
+	wantCode(t, "correction: new experiment", corrected(`INSERT INTO experiments (tenant_id, slug, title, created_by) VALUES ($1, 'x', 'x', 'bob')`, g.tenant), "LDE05")
+	wantCode(t, "correction: new instrument", corrected(`INSERT INTO instruments (tenant_id, node_id, name, kind) VALUES ($1, $2, 'x', 'x')`, g.tenant, g.i), "LDE05")
+	// Another principal in the same transaction can't use bob's correction.
+	err = db.WithTenant(ctx, g.tenant, g.bob, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, fix); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.principal_id', $1, true)`, g.alice.ID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2 WHERE id = $1`, sig1, fix)
+		return err
+	})
+	wantCode(t, "invalidate under a correction someone else reviewed", err, "LDE07")
+
+	// A correction and a policy change don't share a change set.
+	var mixed string
+	err = db.WithTenant(ctx, g.tenant, g.alice, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items)
+			VALUES ($1, 'mix', 'mix', 'alice', 'proposed', $2::jsonb) RETURNING id`, g.tenant,
+			fmt.Sprintf(`[{"op":"update_run_params","run_id":%q,"params":{}},{"op":"set_signing_policy"}]`, g.runID)).Scan(&mixed)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, g.tenant, as(g.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE change_sets SET state = 'committed', decision_reason = 'ok' WHERE id = $1`, mixed)
+		return err
+	})
+	wantCode(t, "correction mixed with a policy change", err, "LDE07")
+}
+
+// SPEC-008-R15, SPEC-008-R13
+func TestSigningPolicyChangeRoles(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenant := newTenant(t, db)
+	sci := newPrincipal(t, db, tenant, "sci", "human", "scientist")
+	rev := newPrincipal(t, db, tenant, "rev", "human", "reviewer")
+	qa := newPrincipal(t, db, tenant, "qa", "human", "qa")
+	adm := newPrincipal(t, db, tenant, "adm", "human", "admin")
+
+	const (
+		oneStep   = `[{"step":1,"meaning":"author","role":"scientist"}]`
+		threeStep = `[{"step":1,"meaning":"author","role":"scientist"},{"step":2,"meaning":"review","role":"reviewer"},{"step":3,"meaning":"approval","role":"qa"}]`
+		defPolicy = `[{"step":1,"meaning":"author","role":"scientist"},{"step":2,"meaning":"review","role":"reviewer"}]`
+	)
+	var expID, pvID string
+	err := db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
+		expID = newExperiment(t, tx, tenant, "exp")
+		pvID, _ = newProtocolVersion(t, tx, tenant, expID, 1, "# p\n")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// setPolicy commits a set_signing_policy change set as tx's principal and
+	// updates the experiment's policy under it.
+	setPolicy := func(ctx context.Context, tx pgx.Tx, tenant, expID, actor, policy string) error {
+		var id string
+		if err := tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items, decision_reason)
+			VALUES ($1, 'policy', 'change policy', $2, 'committed', $3::jsonb, 'change policy') RETURNING id`,
+			tenant, actor, fmt.Sprintf(`[{"op":"set_signing_policy","experiment_id":%q,"signing_policy":%s}]`, expID, policy)).Scan(&id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.change_set_id', $1, true)`, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE experiments SET signing_policy = $2::jsonb WHERE id = $1`, expID, policy)
+		return err
+	}
+	try := func(p storage.Principal, actor, policy string) error {
+		return db.WithTenant(ctx, tenant, p, func(tx pgx.Tx) error {
+			return setPolicy(ctx, tx, tenant, expID, actor, policy)
+		})
+	}
+
+	var gxp bool
+	if err := db.Pool.QueryRow(ctx, `SELECT gxp FROM tenants WHERE id = $1`, tenant).Scan(&gxp); err != nil {
+		t.Fatal(err)
+	}
+	if !gxp {
+		t.Error("a new tenant: want gxp = true")
+	}
+
+	wantCode(t, "GxP: scientist", try(sci, "sci", oneStep), "LDE05")
+	wantCode(t, "GxP: reviewer", try(rev, "rev", oneStep), "LDE05")
+	wantCode(t, "GxP: qa", try(qa, "qa", oneStep), "")
+	wantCode(t, "GxP: admin", try(adm, "adm", defPolicy), "")
+
+	err = db.WithTenant(ctx, tenant, sci, func(tx pgx.Tx) error {
+		if _, err := commitChangeSet(ctx, tx, tenant, "sci", "empty"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE experiments SET signing_policy = $2::jsonb WHERE id = $1`, expID, oneStep)
+		return err
+	})
+	wantCode(t, "scientist updates the policy under an empty change set", err, "LDE05")
+
+	// A policy commit unlocks updates to experiments and nothing else.
+	var unrelated string
+	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) (err error) {
+		unrelated, err = insertRun(tx, tenant, expID, pvID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, stmt string
+		arg        string
+	}{
+		{"params of a run", `UPDATE runs SET params = '{"x":1}' WHERE id = $1`, unrelated},
+		{"state of a run", `UPDATE runs SET state = 'aborted' WHERE id = $1`, unrelated},
+		{"new node", `INSERT INTO lineage_nodes (tenant_id, kind, label, created_by) VALUES ($1, 'sample', 's', 'adm')`, tenant},
+	} {
+		err := db.WithTenant(ctx, tenant, adm, func(tx pgx.Tx) error {
+			var id string
+			if err := tx.QueryRow(ctx, `INSERT INTO change_sets (tenant_id, title, reason, author, state, items, decision_reason)
+				VALUES ($1, 'noop', 'noop', 'adm', 'committed', '[{"op":"set_signing_policy"}]', 'noop') RETURNING id`, tenant).Scan(&id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.change_set_id', $1, true)`, id); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, c.stmt, c.arg)
+			return err
+		})
+		wantCode(t, "admin under a no-op policy commit: "+c.name, err, "LDE05")
+	}
+
+	// Leaving GxP mode is the owner's act, and it is audited.
+	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE tenants SET gxp = false WHERE id = $1`, tenant)
+		return err
+	})
+	wantCode(t, "lde_app sets gxp", err, "42501")
+	err = db.WithOwner(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE tenants SET gxp = false WHERE id = $1`, tenant)
+		return err
+	})
+	wantCode(t, "owner sets gxp with no event", err, "LDE02")
+	err = db.WithOwner(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE tenants SET gxp = false WHERE id = $1`, tenant); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, tenant, audit.Entry{
+			Actor: "system:test", Action: "tenant.gxp_changed", EntityType: "tenant", EntityID: tenant, Reason: "fixture",
+			Payload: map[string]any{"gxp": false},
+		})
+		return err
+	})
+	wantCode(t, "owner sets gxp with its event", err, "")
+
+	wantCode(t, "non-GxP: scientist", try(sci, "sci", oneStep), "LDE05")
+	wantCode(t, "non-GxP: reviewer", try(rev, "rev", oneStep), "")
+
+	// A new experiment gets the default policy whatever lde_app asks for.
+	var isDefault bool
+	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `INSERT INTO experiments (tenant_id, slug, title, created_by, signing_policy)
+			VALUES ($1, 'weak', 'weak', 'it@lab', $2::jsonb) RETURNING signing_policy = $3::jsonb`,
+			tenant, oneStep, defPolicy).Scan(&isDefault)
+	})
+	wantCode(t, "insert an experiment with a one-step policy", err, "")
+	if !isDefault {
+		t.Error("experiment inserted with a one-step policy: want the default policy")
+	}
+
+	// SPEC-008-R13: a run keeps the policy it was created under.
+	var before, after string
+	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) (err error) {
+		before, err = insertRun(tx, tenant, expID, pvID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, "non-GxP: reviewer sets three steps", try(rev, "rev", threeStep), "")
+	err = db.WithTenant(ctx, tenant, as(tenant), func(tx pgx.Tx) (err error) {
+		after, err = insertRun(tx, tenant, expID, pvID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, run string
+		steps     int
+	}{{"run created before the change", before, 1}, {"run created after it", after, 3}} {
+		var n int
+		if err := db.Pool.QueryRow(ctx, `SELECT jsonb_array_length(signing_policy) FROM runs WHERE id = $1`, tc.run).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != tc.steps {
+			t.Errorf("%s: %d steps, want %d", tc.name, n, tc.steps)
+		}
+	}
+
+	for _, tc := range []struct{ name, policy string }{
+		{"a gap in the steps", `[{"step":1,"meaning":"author","role":"scientist"},{"step":3,"meaning":"review","role":"reviewer"}]`},
+		{"an unknown meaning", `[{"step":1,"meaning":"witness","role":"scientist"}]`},
+		{"an empty policy", `[]`},
+	} {
+		wantCode(t, "invalid policy: "+tc.name, try(rev, "rev", tc.policy), "23514")
+	}
 }

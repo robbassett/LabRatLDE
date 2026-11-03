@@ -67,6 +67,7 @@ Real labs also sign in sequence (author → reviewer → QA) and must correct si
 | SPEC-008-R17 | When an admin corrects a principal's display name, the principals API shall require a non-blank name and a reason and audit `principal.renamed`; signatures already applied shall keep their printed name. | no | 11.50(a)(1) |
 | SPEC-008-R18 | If a signature request's `manifest_sha256` differs from the run's manifest at signing time, then the signature service shall reject it with `409` and write nothing. | yes | 11.50, 11.70 |
 | SPEC-008-R19 | While a run has a valid signature whose manifest differs from the current one (an input record was revised), the manifest API and sign dialog shall list what changed since that signature. | no | 11.50 |
+| SPEC-008-R20 | If a commit of a change set that touches a run with valid signatures doesn't carry the `items_sha256` of the stored items, then the change set API shall reject it with `409` and write nothing. | yes | 11.10(c), four-eyes |
 
 ## 4. Acceptance examples
 
@@ -97,6 +98,8 @@ Fixture: experiment `E` with the default policy `[{step:1, meaning:"author", rol
 **SPEC-008-R16**: a principal with `display_name = ''` and the right role signing step 1 fails with `LDE07`.
 
 **SPEC-008-R18**: alice fetches the manifest. A sample input is then revised. Alice's request with the earlier hash is `409`, with no signature row. Fetching the new manifest and signing succeeds.
+
+**SPEC-008-R20**: with `R` signed, bob opens alice's proposed correction. Alice then replaces its items. Bob's commit with the hash he read is `409`, and nothing changes. A commit with no hash is `409`. After bob reads the new items, committing with their hash succeeds.
 
 ## 5. Open questions
 

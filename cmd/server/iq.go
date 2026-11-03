@@ -39,6 +39,7 @@ var iqTriggers = []string{
 	"experiments_default_signing_policy",
 	"signatures_guard", "signatures_no_truncate", "signature_manifests_append_only", "signature_manifests_no_truncate",
 	"signatures_audited", "signatures_invalidated_audited", "signatures_settle_run", "signatures_invalidated_together",
+	"experiments_policy_gate", "signatures_invalidation_reviewed",
 }
 
 // runIQ is the installation qualification: read-only catalog checks that the

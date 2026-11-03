@@ -79,16 +79,19 @@ A run's seal covers its own node and the nodes it generated, as in `lineage_node
 
 ### Corrections (migration `0018_correction_review`)
 
-- `change_sets.author_for uuid` (FK principals), stamped on insert as `lde_on_behalf_of()`; the guard's identity check covers it. `change_sets.reviewed boolean NOT NULL DEFAULT false`, stamped by the guard for `lde_app` and not granted for update.
-- `lde_reviewed_commit() RETURNS boolean` (`STABLE`): `app.change_set_id` names a change set with `state = 'committed'`, `reviewed`, `decided_by = lde_current_principal()`, and `xmin` of this transaction.
+- `change_sets.author_for uuid` (FK principals), stamped on insert as `lde_on_behalf_of()`; the guard's identity check covers it. As `lde_app`, replacing or withdrawing a proposal needs `lde_on_behalf_of()` to equal `author_for` (`LDE05`), so an agent with two delegators can't move a proposal to the other human. `change_sets.review text CHECK (review IN ('correction', 'policy'))`, stamped by the guard for `lde_app` and not granted for update.
+- `lde_reviewed_commit(kind text) RETURNS boolean` (`STABLE`): `app.change_set_id` names a change set with `state = 'committed'`, `review = kind`, `decided_by = lde_current_principal()`, and `xmin` of this transaction.
+- `signatures_invalidation_reviewed` (`BEFORE UPDATE`, for a valid signature): as `lde_app`, the change set must have `review = 'correction'` and `decided_by = lde_current_principal()`, else `LDE07`.
 - `change_sets_guard` (`CREATE OR REPLACE`). Let `sealed` be whether `change_set_touched_runs` returns anything for `NEW.items`, and `policy` whether any item has `op = 'set_signing_policy'`. For `NEW.state IN ('committed', 'rejected')`, as `lde_app`:
   - If `sealed`: the principal must hold `reviewer` or `qa`, else `LDE07`. On a commit it must also not be `author_id` or `author_for` (an `INSERT` as `committed` is a direct edit, so its author is the committer), else `LDE07` (R09). `lde_require_human()` still applies.
   - If `policy`: `lde_require_signing_policy_role(NEW.tenant_id)`.
-  - If either: skip `lde_require_role('scientist')` and set `NEW.reviewed := NEW.state = 'committed'`.
+  - If both: `LDE07`; they go in separate change sets.
+  - If either: skip `lde_require_role('scientist')` and, on a commit, stamp `NEW.review` as `correction` or `policy`.
   - Otherwise behaviour is unchanged. Proposing, replacing and withdrawing still need `scientist`.
 - `lde_require_signing_policy_role(t uuid)`: `lde_require_role('qa', 'admin')` if the tenant is GxP, else `lde_require_role('reviewer', 'qa', 'admin')`. It raises `LDE05` (R15).
 - `experiments_policy_gate` (`BEFORE UPDATE … WHEN (OLD.signing_policy IS DISTINCT FROM NEW.signing_policy)`) calls the same function, so an empty change set can't get a scientist past the guard.
-- `lab_records_require_scientist` and `runs_role_gate` (`CREATE OR REPLACE`) return early when `lde_reviewed_commit()`. A reviewer who isn't a scientist can therefore apply the correction they committed.
+- `lab_records_require_scientist` (`CREATE OR REPLACE`) passes without `scientist` only for: inserts and updates of `lineage_nodes`, `lineage_edges` and `notes` under `lde_reviewed_commit('correction')`, and updates of `experiments` under `lde_reviewed_commit('policy')`. Instruments, readings and protocols always need `scientist`.
+- `runs_role_gate` (`CREATE OR REPLACE`) passes without `scientist` only for an update that changes nothing but `params`, under `lde_reviewed_commit('correction')`, of a run the change set's items name. It also makes `node_id` and `experiment_id` immutable for `lde_app` (`LDE03`), because the seal and `change_set_touched_runs` resolve through them.
 
 ### Manifest
 
@@ -124,6 +127,7 @@ Canonical JSON (`audit.Canonicalize`) with these keys. Arrays are sorted by id.
 - **Runs:** create, read, list and transition responses gain `signatures` (R12) and `signing_policy`. `GET /v1/experiments/{id}` gains `signing_policy`, and `GET /v1/me` gains `tenant_gxp`.
 - **Errors:** `LDE07` is `409` (`IsConflict`). `to: signed` on transitions is `400`, naming the signatures endpoint.
 - **Signing transaction:** take the audit chain lock (`audit.LockChain`) first, because edits take it before their lock on the run and the opposite order deadlocks. Then `SELECT … FOR UPDATE` the run, build the manifest, compare hashes (R18), insert the manifest and signature, append `signature.applied`, and if the run is now `signed`, append `run.signed` with `reason` = the meaning and payload `{from, to}`.
+- **Commit request (R20):** `POST /v1/change-sets/{id}/commit` gains `items_sha256`. For a change set that touches a run with valid signatures it is required, and a missing or different hash is `409` with nothing written. For any other change set it is optional and checked if sent.
 - **Commit transaction (R10):** in `decideChangeSet`, after the `change_set.committed` event and before `applyItems`: for each run from `change_set_touched_runs`, in id order, lock it, set the invalidation fields on its valid signatures, and append `signature.invalidated` for each (entity `signature`, reason the change set's reason, payload `{run_id, change_set_id}`). If the state changed, append `run.transitioned` with the same reason and payload `{from, to}`.
 
 ### Re-authentication
@@ -167,6 +171,7 @@ In dev no token is needed: `reauth_at` is the current time and `reauth_method` i
 | R10 | `TestCorrectionInvalidatesSignatures` | `internal/api/integration_test.go` |
 | R12 | `TestRunsShowSignatures`; `signatures.spec.ts` | `internal/api/integration_test.go`; `web/e2e/` |
 | R18 | `TestSigningBindsToShownManifest` | `internal/api/integration_test.go` |
+| R20 | `TestCommitBindsToReviewedItems` | `internal/api/integration_test.go` |
 
 Existing tests that change with this spec:
 
@@ -195,3 +200,4 @@ Existing tests that change with this spec:
 | 2026-11-02 | Experiment inserts by lde_app are forced to the default policy; the gxp audit event must carry a reason; run inserts clear signed_from | Found by integrity review of 0015: the column DEFAULT alone let lde_app insert a weaker policy (bypassing R15), R15 requires a reason, and signed_from must start empty | Relying on Go |
 | 2026-11-03 | The signature guard function is `signatures_reject_mutation()`, with the trigger named `signatures_guard`, as for notes. `lde_app` inserts manifests through a column grant. From the integrity review of tasks 2.1-2.7 | Matches the `*_reject_*` naming. A client could otherwise choose a manifest's `created_at` | A trigger stamping `created_at`, which is more code for the same result |
 | 2026-11-03 | While a run is aborted or holds a valid signature, `lde_app` can't change its row at all (`LDE04`). Invalidating one of several signatures fails at commit. Settling a run locks it. Signing takes the audit chain lock before the run lock. From the integrity review of tasks 2.8-2.9 | A probe repointed `node_id`, edited the sealed node and pointed it back, with no invalidation; aborted runs could be reopened the same way. R10's "every signature" was only enforced in Go, and a stale signature could sit beside a re-signed step. Concurrent settling could leave a run `signed` with a step unsigned. The two lock orders deadlocked | Freezing only named columns, where a later column would be missed; retrying on `40P01` |
+| 2026-11-03 | From the integrity review of tasks 3.1-3.3: `reviewed` became `review` (`correction` or `policy`), and each passes only the gates its own work needs. Invalidating needs a correction reviewed by this principal. A run's `node_id` and `experiment_id` are immutable. A replace or withdraw must act for the same human as the proposal. A commit of a correction carries `items_sha256` (R20) | A probe let a scientist strip a signed run's signatures by repointing a run of their own at its dataset. A no-op policy item let one admin write readings and change runs with no second person. A real correction let a reviewer abort unrelated runs. An agent with two delegators defeated `author_for`. An author could swap items after review, so a reviewer could commit what they never read | A gate per `op` matched to each statement, which is more code than the table scope. A reviewer with arbitrary SQL can still edit an unrelated unsealed node under their correction; the revision records it under that change set |

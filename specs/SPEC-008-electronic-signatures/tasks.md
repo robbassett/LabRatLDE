@@ -110,7 +110,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 3: Corrections in the database
 
-- [ ] 3.1 Test: who may commit a correction (SPEC-008-R09)
+- [x] 3.1 Test: who may commit a correction (SPEC-008-R09)
   - Requirements: SPEC-008-R09
   - Files: `internal/storage/integration_test.go`
   - Do: `TestCorrectionCommitRoles`. Signed run from `signFixture` (alice, bob). Alice proposes `update_run_params`. Each case below is its own transaction, and each failure leaves the proposal open:
@@ -124,7 +124,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Comment `// SPEC-008-R09`.
   - Verify: fails only on the new test.
   - Integrity: yes
-- [ ] 3.2 Test: who may change a signing policy (SPEC-008-R15)
+- [x] 3.2 Test: who may change a signing policy (SPEC-008-R15)
   - Requirements: SPEC-008-R15
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSigningPolicyChangeRoles`. Helper `setPolicy(ctx, tx, tenant, expID, actor, policy)` inserts a committed change set whose item is `set_signing_policy`, sets `app.change_set_id`, and updates `experiments.signing_policy`.
@@ -139,7 +139,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Comment `// SPEC-008-R15`.
   - Verify: fails only on the new tests.
   - Integrity: yes
-- [ ] 3.3 Migration `0018_correction_review`
+- [x] 3.3 Migration `0018_correction_review`
   - Requirements: SPEC-008-R09, SPEC-008-R15
   - Files: `internal/storage/migrations/0018_correction_review.sql`, `cmd/server/iq.go`
   - Do: everything in design §2 "Corrections". Copy the current `change_sets_guard` and `runs_role_gate` bodies from `0011` and `0017`, and change only what the design says. Add `experiments_policy_gate` to `iqTriggers`.
@@ -204,6 +204,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
   - Requirements: SPEC-008-R10
   - Files: `internal/api/integration_test.go`
   - Do: `TestCorrectionInvalidatesSignatures`, as the R09/R10 example, on `prodServer`.
+    - Every commit in this test sends the `items_sha256` it read (R20, task 4.8a).
     - Alice proposes `update_run_params`, 60 → 62, reason "transcription error". Her commit is 409. A `PATCH /v1/runs/{id}/params` by alice is 409.
     - Bob's commit is 200. Both signatures have `valid = false`, the change set id and the reason. There are two `signature.invalidated` events and one `run.transitioned` with `from: signed`. `state` is `completed`. The revision history shows 60 then 62. Alice can sign step 1 again, against a new manifest.
     - A failed, signed run returns to `failed`.
@@ -211,10 +212,16 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - A note edit on a sealed node counts; an annotation edit doesn't, and leaves signatures valid.
     - Comment `// SPEC-008-R10`.
   - Verify: fails only on the new tests.
+- [ ] 4.8a Test: a commit binds to the items reviewed (SPEC-008-R20)
+  - Requirements: SPEC-008-R20
+  - Files: `internal/api/integration_test.go`
+  - Do: `TestCommitBindsToReviewedItems`, as the R20 example, on `prodServer`. After each 409, the change set is still proposed and the signatures are valid. Comment `// SPEC-008-R20`. Added by the integrity review of Phase 3.
+  - Verify: fails only on the new tests.
 - [ ] 4.9 Corrections in commit
   - Requirements: SPEC-008-R10
   - Files: `internal/api/changesets.go`, `internal/api/signatures.go`
   - Do:
+    - The commit request, as design §2 "Commit request": read `items_sha256` from the body, and compare it in the transaction after locking the change set.
     - `invalidateTouched(ctx, tx, p, csID, reason string) error`, as design §2 "Commit transaction". `decideChangeSet` calls it on a commit, between the `change_set.committed` event and `applyItems`.
     - `getChangeSet` gains `invalidates: [{run_id, signatures}]` for a proposed change set.
   - Verify: `make test-integration TEST_DB=…` passes, including 4.8.
@@ -293,7 +300,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 - [ ] 5.8 Review inbox warning
   - Requirements: SPEC-008-R09, SPEC-008-R10 (UI side)
   - Files: `web/src/InboxView.tsx`
-  - Do: when `invalidates` isn't empty, show the warning from design §3 in the expanded card. Hide Commit for the author. After a commit, the existing `labrat:revised` event reloads the run view.
+  - Do: when `invalidates` isn't empty, show the warning from design §3 in the expanded card. Hide Commit for the author. Commit sends the `items_sha256` of the items shown; on a 409 the card reloads them and says they changed. After a commit, the existing `labrat:revised` event reloads the run view.
   - Verify: as another dev user, commit the 5.7 proposal. The signatures show as invalidated, and the run returns to `completed`.
 - [ ] 5.9 Signing policy and rename controls
   - Requirements: SPEC-008-R15, SPEC-008-R17
