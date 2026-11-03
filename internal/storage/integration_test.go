@@ -2113,6 +2113,20 @@ func TestCorrectionCommitRoles(t *testing.T) {
 	})
 	wantCode(t, "invalidate under a correction someone else reviewed", err, "LDE07")
 
+	// A run can't be added to a sealed node, or renumbered: either could make a
+	// committed change set that names its id touch a run nobody reviewed.
+	err = db.WithTenant(ctx, g.tenant, as(g.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO runs (tenant_id, experiment_id, node_id, protocol_version_id, created_by)
+			SELECT tenant_id, experiment_id, $2, protocol_version_id, 'it@lab' FROM runs WHERE id = $1`, g.runID, g.d)
+		return err
+	})
+	wantCode(t, "new run on a sealed dataset", err, "LDE04")
+	err = db.WithTenant(ctx, g.tenant, as(g.tenant), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE runs SET id = gen_random_uuid() WHERE id = $1`, other)
+		return err
+	})
+	wantCode(t, "renumber a run", err, "LDE03")
+
 	// A correction and a policy change don't share a change set.
 	var mixed string
 	err = db.WithTenant(ctx, g.tenant, g.alice, func(tx pgx.Tx) error {

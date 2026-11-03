@@ -85,13 +85,14 @@ A run's seal covers its own node and the nodes it generated, as in `lineage_node
 - `change_sets_guard` (`CREATE OR REPLACE`). Let `sealed` be whether `change_set_touched_runs` returns anything for `NEW.items`, and `policy` whether any item has `op = 'set_signing_policy'`. For `NEW.state IN ('committed', 'rejected')`, as `lde_app`:
   - If `sealed`: the principal must hold `reviewer` or `qa`, else `LDE07`. On a commit it must also not be `author_id` or `author_for` (an `INSERT` as `committed` is a direct edit, so its author is the committer), else `LDE07` (R09). `lde_require_human()` still applies.
   - If `policy`: `lde_require_signing_policy_role(NEW.tenant_id)`.
-  - If both: `LDE07`; they go in separate change sets.
+  - If both, on a commit: `LDE07`; they go in separate change sets.
   - If either: skip `lde_require_role('scientist')` and, on a commit, stamp `NEW.review` as `correction` or `policy`.
   - Otherwise behaviour is unchanged. Proposing, replacing and withdrawing still need `scientist`.
 - `lde_require_signing_policy_role(t uuid)`: `lde_require_role('qa', 'admin')` if the tenant is GxP, else `lde_require_role('reviewer', 'qa', 'admin')`. It raises `LDE05` (R15).
 - `experiments_policy_gate` (`BEFORE UPDATE … WHEN (OLD.signing_policy IS DISTINCT FROM NEW.signing_policy)`) calls the same function, so an empty change set can't get a scientist past the guard.
 - `lab_records_require_scientist` (`CREATE OR REPLACE`) passes without `scientist` only for: inserts and updates of `lineage_nodes`, `lineage_edges` and `notes` under `lde_reviewed_commit('correction')`, and updates of `experiments` under `lde_reviewed_commit('policy')`. Instruments, readings and protocols always need `scientist`.
-- `runs_role_gate` (`CREATE OR REPLACE`) passes without `scientist` only for an update that changes nothing but `params`, under `lde_reviewed_commit('correction')`, of a run the change set's items name. It also makes `node_id` and `experiment_id` immutable for `lde_app` (`LDE03`), because the seal and `change_set_touched_runs` resolve through them.
+- As `lde_app`, `runs_role_gate` also refuses a run inserted on a sealed node (`LDE04`), so a committed change set can't later be made to touch another run.
+- `runs_role_gate` (`CREATE OR REPLACE`) passes without `scientist` only for an update that changes nothing but `params`, under `lde_reviewed_commit('correction')`, of a run the change set's items name. It also makes `id`, `node_id` and `experiment_id` immutable for `lde_app` (`LDE03`), because the seal and `change_set_touched_runs` resolve through them.
 
 ### Manifest
 

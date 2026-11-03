@@ -123,7 +123,7 @@ BEGIN
         sealed := EXISTS (SELECT 1 FROM public.change_set_touched_runs(NEW.tenant_id, NEW.items));
         policy := EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.items) i WHERE i ->> 'op' = 'set_signing_policy');
     END IF;
-    IF sealed AND policy THEN
+    IF sealed AND policy AND NEW.state = 'committed' THEN
         RAISE EXCEPTION 'change set %: a correction and a signing policy change go in separate change sets', NEW.id
             USING ERRCODE = 'LDE07';
     END IF;
@@ -209,7 +209,7 @@ BEGIN
 END;
 $$;
 
--- SPEC-008-R09: as 0017, plus two things. A run's node and experiment never
+-- SPEC-008-R09: as 0017, plus three things. A run's id, node and experiment never
 -- change, because the seal and the items of a correction resolve through them.
 -- A correction passes the scientist check only to change the params of a run it
 -- names, so it can't change a run's state or reach an unrelated run.
@@ -222,8 +222,13 @@ BEGIN
         RAISE EXCEPTION 'run state signed is set only by signing' USING ERRCODE = 'LDE07';
     END IF;
     IF current_user = 'lde_app' AND TG_OP = 'UPDATE'
-       AND (NEW.node_id, NEW.experiment_id) IS DISTINCT FROM (OLD.node_id, OLD.experiment_id) THEN
-        RAISE EXCEPTION 'run %: its node and experiment never change', OLD.id USING ERRCODE = 'LDE03';
+       AND (NEW.id, NEW.node_id, NEW.experiment_id) IS DISTINCT FROM (OLD.id, OLD.node_id, OLD.experiment_id) THEN
+        RAISE EXCEPTION 'run %: its id, node and experiment never change', OLD.id USING ERRCODE = 'LDE03';
+    END IF;
+    -- A new run on a sealed node would make a committed change set that names
+    -- its id touch the run that sealed the node.
+    IF current_user = 'lde_app' AND TG_OP = 'INSERT' AND public.lineage_node_sealed(NEW.node_id) THEN
+        RAISE EXCEPTION 'lineage node % is sealed and cannot gain a run', NEW.node_id USING ERRCODE = 'LDE04';
     END IF;
     IF TG_OP = 'UPDATE' AND to_jsonb(NEW) - 'params' = to_jsonb(OLD) - 'params'
        AND public.lde_reviewed_commit('correction')
