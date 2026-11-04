@@ -65,7 +65,7 @@ Fixture: a test JWKS with key `K` and issuer `https://idp.test`. Tenant `T1` has
 
 **SPEC-006-R06**: alice transitioning a completed run to `signed` fails with `LDE05`. Bob doing it succeeds. A reviewer-only principal creating a node fails with `LDE05`.
 
-> **Superseded by SPEC-008** (2026-11-04): the "other than by signing a run" exception and the `reviewer`/`qa` check on `signed` no longer apply. `lde_app` can't set `signed` at all; a human signs through the signatures endpoint, and the run's signing policy names the role each step needs. See [SPEC-008](../../SPEC-008-electronic-signatures/requirements.md) R05, R08.
+> **Superseded by SPEC-008** (2026-11-04): the "other than by signing a run" exception and the `reviewer`/`qa` check on `signed` no longer apply. `lde_app` can't set `signed` at all; a human signs through the signatures endpoint, and the run's signing policy names the role each step needs. See [SPEC-008](../SPEC-008-electronic-signatures/requirements.md) R05, R08.
 
 **SPEC-006-R07**: `bot` with no delegation gets `403` on any request, with or without `X-LDE-On-Behalf-Of: alice`. After carol delegates alice → bot, the request with the header succeeds and without it gets `403`.
 

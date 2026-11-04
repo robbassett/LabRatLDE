@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Approved |
+| **Status** | Implemented |
 | **Owner** | Rob Bassett |
-| **Created / Updated** | 2026-10-18 / 2026-11-01 |
+| **Created / Updated** | 2026-10-18 / 2026-11-04 |
 | **Regulatory refs** | 21 CFR 11.10(e), 11.10(g), 11.50, 11.70, 11.100(a), 11.200(a); EU Annex 11 §14 |
 | **Depends on** | `SPEC-002`, `SPEC-003`, `SPEC-006`, `SPEC-007` |
 | **Supersedes** | `SPEC-001-R12` (meaning becomes a controlled value); the "terminal" part of `SPEC-001-R11` for `signed`; `SPEC-002-R01` (sealed predicate); `SPEC-006-R06` (who may sign: the signing policy decides, not `reviewer`/`qa`); `SPEC-007-R10` (sealed commits, except aborted runs and runs signed before this spec) |

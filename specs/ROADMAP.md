@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Owner** | Rob Bassett |
-| **Updated** | 2026-11-01 |
+| **Updated** | 2026-11-04 |
 | **Baseline** | [`SPEC-001`](implemented/SPEC-001-core-integrity/requirements.md) (Implemented) at commit `76a7ff0` |
 
 This is the plan for getting from the scaffold to a regulated pilot and beyond. Each spec is a folder holding `requirements.md`, `design.md` and `tasks.md` (template in `TEMPLATE/`); once implemented and verified it moves to `implemented/` with a `uat.md` user acceptance test plan. Every brief in §5 now has a **Draft** spec. Each spec lists its open questions; resolve them (the `spec-writer` agent can help: `claude --agent spec-writer`), then mark the spec Approved before any work starts. The briefs in §5 are kept as the summary. Where a spec refines a brief's dependencies, the spec wins.
@@ -16,7 +16,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-005 | [UI stack and workspace shell](implemented/SPEC-005-ui-workspace-shell/requirements.md) | Implemented |
 | SPEC-006 | [Identity and roles](implemented/SPEC-006-identity-and-roles/requirements.md) | Implemented |
 | SPEC-007 | [Revisions, change sets and notes](implemented/SPEC-007-revisions-and-change-sets/requirements.md) | Implemented |
-| SPEC-008 | [Electronic signatures v2](SPEC-008-electronic-signatures/requirements.md) | Approved |
+| SPEC-008 | [Electronic signatures v2](implemented/SPEC-008-electronic-signatures/requirements.md) | Implemented |
 | SPEC-009 | [Schema registry and schema-driven forms](SPEC-009-schema-registry-and-forms/requirements.md) | Draft |
 | SPEC-010 | [Schema governance namespaces](SPEC-010-schema-governance/requirements.md) | Draft |
 | SPEC-011 | [Query and comparison](SPEC-011-query-and-comparison/requirements.md) | Draft |
@@ -42,7 +42,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | Postgres + RLS + JSONB | Built | `0003_rls.sql`, FORCE'd and fail-closed |
 | Append-only hash-chained audit | Built | Digest enforced by trigger; three verifiers agree |
 | Global lineage DAG | Built | Acyclicity trigger, closure query |
-| Run lifecycle and signatures | Partial | A signature is a state plus a free-text reason, not a signature record |
+| Run lifecycle and signatures | Built | Signature records bound to a manifest digest, ordered policies, re-authentication, corrections (SPEC-008) |
 | Instrument ingest | Partial | NDJSON numeric readings only; no raw vendor files or parsers |
 | Protocols as code | Built | Append-only, gapless versions with a DB-computed SHA-256; each run pins its version immutably (SPEC-003) |
 | Identity | Dev headers only | `LDE_ENV=prod` refuses to serve |
@@ -60,7 +60,7 @@ These are correctness issues in what exists, not missing features. SPEC-002 and 
 1. **Sealing stops at the run row.** After a run is signed, the database still accepts new `used` edges into its node, new datasets `wasGeneratedBy` it, and `UPDATE` of `lineage_nodes.attrs`, because `lde_app` holds UPDATE in `0003_rls.sql`.
 2. **An unaudited mutation path exists in the DB.** `lde_app` can `UPDATE` `experiments`, `lineage_nodes` and `instruments`. No endpoint does so, but no trigger audits it either.
 3. ~~**Runs don't pin their protocol.**~~ Closed by SPEC-003: a run pins an immutable protocol version and its hash.
-4. **A signature isn't a record.** §11.50/§11.70 need, for each signature: the signer's printed name, the time, a controlled meaning, and a binding to the content signed. Real sign-off is also multi-party (author → reviewer → QA).
+4. ~~**A signature isn't a record.**~~ Closed by SPEC-008.
 
 ## 2. Design decisions and corrections
 

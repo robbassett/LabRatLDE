@@ -331,7 +331,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 7: Verify and close out
 
-- [ ] 7.1 `verifier` passes the whole spec
-- [ ] 7.2 `uat-planner` writes [uat.md](uat.md)
-- [ ] 7.3 Status set to Implemented, folder moved to `specs/implemented/`, `ROADMAP.md` updated
-- [ ] 7.4 Summary commit written as the PR description
+- [x] 7.1 `verifier` passes the whole spec
+- [x] 7.2 `uat-planner` writes [uat.md](uat.md)
+- [x] 7.3 Status set to Implemented, folder moved to `specs/implemented/`, `ROADMAP.md` updated
+- [x] 7.4 Summary commit written as the PR description

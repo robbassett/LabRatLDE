@@ -1,6 +1,6 @@
 # Electronic signatures
 
-A signature in LabRat ties a named person to a meaning and to the exact content of a run, at a moment they just proved who they were. This is the design of [SPEC-008](../specs/SPEC-008-electronic-signatures/requirements.md) (21 CFR 11.50, 11.70, 11.100 and 11.200). This page describes what it delivers and what it doesn't.
+A signature in LabRat ties a named person to a meaning and to the exact content of a run, at a moment they just proved who they were. This is the design of [SPEC-008](../specs/implemented/SPEC-008-electronic-signatures/requirements.md) (21 CFR 11.50, 11.70, 11.100 and 11.200). This page describes what it delivers and what it doesn't.
 
 The `curl` examples use the dev headers and variables from the [README walkthrough](../README.md#walkthrough-sample--run--instrument-stream--signature--proof): `H` for the first person, `R` for a second (a reviewer), `API`, `EXP` and `RUN`. In production, send `-H "Authorization: Bearer $TOKEN"` instead; see [identity.md](identity.md).
 
