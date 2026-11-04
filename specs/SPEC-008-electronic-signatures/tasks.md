@@ -263,26 +263,26 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 5: UI
 
-- [ ] 5.1 API client
+- [x] 5.1 API client
   - Requirements: SPEC-008-R12 (support)
   - Files: `web/src/api.ts`
   - Do: types `Signature`, `PolicyStep`, `RunManifest`, `SignoffItem`; `signatures` and `signing_policy` on `Run` and `RunSummary`; `signing_policy` on `Experiment`; `tenant_gxp` on `Me`; `invalidates` on `ChangeSetDetail`. Functions `getManifest`, `signRun`, `listSignoff`, `setSigningPolicy`, `renamePrincipal`.
-- [ ] 5.2 Re-authentication redirect
+- [x] 5.2 Re-authentication redirect
   - Requirements: SPEC-008-R04 (UI side)
   - Files: `web/src/auth.ts`, `web/src/App.tsx`
   - Do: `beginReauth(oidc, pending: PendingSign)` stores `PendingSign` (`{runId, step, meaning, comment, sha256}`) under `labrat.sign.pending` and redirects like `beginSignIn`, plus `prompt=login` and `max_age=0`. `takePendingSign(runId)` returns and removes it. `App` keeps the latest ID token, and `reauthToken()` returns it once and clears it.
   - Verify: `npm run build`. Against the local Keycloak from SPEC-006's UAT, the redirect shows the login form, and the tab is restored on return.
-- [ ] 5.3 Test: the signatures panel (SPEC-008-R12)
+- [x] 5.3 Test: the signatures panel (SPEC-008-R12)
   - Requirements: SPEC-008-R12
   - Files: `web/e2e/signatures.spec.ts` (new)
   - Do: one test, citing `// SPEC-008-R12` on the line above `test(`. Through Playwright's `request` with dev headers: an admin creates alice and bob with display names and the roles from the fixture, plus a completed run; alice and bob sign through the API. In the page: sign in as bob, open the run, and expect "Alice Ng", "author", "Bob Ortiz", "review" and a time ending in `UTC`. Alice proposes and bob commits a correction through the API. Reload, and expect both rows marked invalidated with "transcription error".
   - Verify: `make e2e` fails only on the new test.
-- [ ] 5.4 Signatures panel
+- [x] 5.4 Signatures panel
   - Requirements: SPEC-008-R12
   - Files: `web/src/SignaturesPanel.tsx` (new), `web/src/RunView.tsx`, `web/src/styles.css`
   - Do: as design §3, in a `<section>` above Notes, as a table with a caption. An invalidated row uses `<s>`, not colour alone, and has the text "Invalidated by change set …: <reason>". Show `signed_at` as `YYYY-MM-DD HH:mm UTC`, with the full timestamp in `dateTime`.
   - Verify: `make e2e` passes, including 5.3.
-- [ ] 5.5 Sign dialog
+- [x] 5.5 Sign dialog
   - Requirements: SPEC-008-R01, SPEC-008-R04, SPEC-008-R18, SPEC-008-R19
   - Files: `web/src/SignDialog.tsx` (new), `web/src/SignaturesPanel.tsx`, `web/src/styles.css`
   - Do: as design §3. A `<dialog>` with focus returned on close. It shows the manifest summary and `changes`. A required confirmation checkbox reads "By signing I confirm I have reviewed this record, and my signature means: <meaning>". On a 409 hash mismatch it reloads the manifest and says the record changed. Errors go in `role="alert"`. In prod, confirm calls `beginReauth`; on return, `takePendingSign` resumes and posts with `reauthToken()`. The Sign button shows when the user holds the next step's role and hasn't validly signed.

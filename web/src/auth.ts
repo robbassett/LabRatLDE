@@ -47,9 +47,9 @@ function redirectUri(): string {
   return `${location.origin}/`;
 }
 
-// beginSignIn sends the browser to the IdP. The open tab (location.hash) is
-// restored on return.
-export async function beginSignIn(oidc: OIDCSettings): Promise<void> {
+// redirect sends the browser to the IdP's authorization endpoint. extra adds
+// query parameters, such as the ones that force a fresh login.
+async function redirect(oidc: OIDCSettings, extra: Record<string, string>): Promise<void> {
   const d = await discover(oidc.issuer);
   const pending: Pending = { verifier: randomString(), state: randomString(), hash: location.hash };
   try {
@@ -66,8 +66,73 @@ export async function beginSignIn(oidc: OIDCSettings): Promise<void> {
     state: pending.state,
     code_challenge: await s256(pending.verifier),
     code_challenge_method: 'S256',
+    ...extra,
   }).toString();
   location.assign(url.toString());
+}
+
+// beginSignIn sends the browser to the IdP. The open tab (location.hash) is
+// restored on return.
+export function beginSignIn(oidc: OIDCSettings): Promise<void> {
+  return redirect(oidc, {});
+}
+
+// PendingSign is a signature the user confirmed and the re-authentication
+// redirect interrupted (SPEC-008-R04). sha256 is the manifest hash they saw.
+export type PendingSign = { runId: string; step: number; meaning: string; comment: string; sha256: string };
+
+const SIGN_KEY = 'labrat.sign.pending';
+
+// beginReauth stores the pending signature and sends the browser to the IdP
+// with a forced fresh login. The open tab is restored on return, as for
+// beginSignIn.
+export async function beginReauth(oidc: OIDCSettings, pending: PendingSign): Promise<void> {
+  try {
+    sessionStorage.setItem(SIGN_KEY, JSON.stringify(pending));
+  } catch {
+    throw new Error('Signing needs session storage, which this browser has disabled.');
+  }
+  try {
+    await redirect(oidc, { prompt: 'login', max_age: '0' });
+  } catch (err) {
+    try {
+      sessionStorage.removeItem(SIGN_KEY);
+    } catch {
+      // Nothing stored, nothing to clear.
+    }
+    throw err;
+  }
+}
+
+// takePendingSign returns the signature waiting for run runId and removes it.
+// A pending signature for another run is left alone.
+export function takePendingSign(runId: string): PendingSign | null {
+  try {
+    const raw = sessionStorage.getItem(SIGN_KEY);
+    if (!raw) return null;
+    const pending = JSON.parse(raw) as PendingSign;
+    if (pending.runId !== runId) return null;
+    sessionStorage.removeItem(SIGN_KEY);
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+// The latest ID token, kept in memory for the next signature. App sets it at
+// every sign-in and re-authentication.
+let latestIdToken: string | undefined;
+
+export function setLatestIdToken(token: string | undefined): void {
+  latestIdToken = token;
+}
+
+// reauthToken returns the latest ID token once and clears it, so a token is
+// never reused for a second signature.
+export function reauthToken(): string | undefined {
+  const t = latestIdToken;
+  latestIdToken = undefined;
+  return t;
 }
 
 function takePending(): Pending | null {

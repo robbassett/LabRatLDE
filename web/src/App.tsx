@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { clearSession, getMe, meta as loadMeta, setAccessToken, setUnauthorizedHandler, storedActor, type Meta } from './api';
-import { completeSignIn, endSessionUrl, watchIdle } from './auth';
+import { completeSignIn, endSessionUrl, setLatestIdToken, watchIdle } from './auth';
 import SignIn from './SignIn';
 import Workspace from './Workspace';
 
@@ -17,6 +17,7 @@ export default function App() {
   // signOut discards the token (or the dev session) and returns to sign-in.
   const signOut = useCallback((why: string | null) => {
     setAccessToken(null);
+    setLatestIdToken(undefined);
     clearSession();
     setSession(null);
     setMessage(why);
@@ -38,6 +39,7 @@ export default function App() {
         const tokens = await completeSignIn(m.oidc);
         if (!tokens || !live) return;
         setAccessToken(tokens.accessToken);
+        setLatestIdToken(tokens.idToken);
         const me = await getMe();
         if (live) setSession({ handle: me.on_behalf_of ? me.actor : me.handle, idToken: tokens.idToken });
       } catch (err: unknown) {
