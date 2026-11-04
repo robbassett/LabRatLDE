@@ -4,6 +4,7 @@ import {
   disablePrincipal,
   grantRole,
   listPrincipals,
+  renamePrincipal,
   revokeRole,
   TENANT_ROLES,
   type NewPrincipal,
@@ -71,7 +72,8 @@ type Action =
   | { type: 'create' }
   | { type: 'grant'; principal: Principal }
   | { type: 'revoke'; principal: Principal; grant: RoleGrant }
-  | { type: 'disable'; principal: Principal };
+  | { type: 'disable'; principal: Principal }
+  | { type: 'rename'; principal: Principal };
 
 // PrincipalsView is the admin screen for people, services and agents, and
 // their roles. The database decides who may change what; a non-admin sees
@@ -157,16 +159,21 @@ export default function PrincipalsView() {
                 </ul>
               </td>
               <td>
-                {p.enabled && (
-                  <div className="actions">
-                    <button type="button" aria-label={`Grant a role to ${p.handle}`} onClick={() => start({ type: 'grant', principal: p })}>
-                      Grant role
-                    </button>
-                    <button type="button" aria-label={`Disable ${p.handle}`} onClick={() => start({ type: 'disable', principal: p })}>
-                      Disable
-                    </button>
-                  </div>
-                )}
+                <div className="actions">
+                  <button type="button" aria-label={`Rename ${p.handle}`} onClick={() => start({ type: 'rename', principal: p })}>
+                    Rename
+                  </button>
+                  {p.enabled && (
+                    <>
+                      <button type="button" aria-label={`Grant a role to ${p.handle}`} onClick={() => start({ type: 'grant', principal: p })}>
+                        Grant role
+                      </button>
+                      <button type="button" aria-label={`Disable ${p.handle}`} onClick={() => start({ type: 'disable', principal: p })}>
+                        Disable
+                      </button>
+                    </>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -183,6 +190,8 @@ function ActionPanel({ action, onDone, onCancel }: { action: Action; onDone: (te
       return <CreateForm onDone={onDone} onCancel={onCancel} />;
     case 'grant':
       return <GrantForm principal={action.principal} onDone={onDone} onCancel={onCancel} />;
+    case 'rename':
+      return <RenameForm principal={action.principal} onDone={onDone} onCancel={onCancel} />;
     case 'revoke': {
       const { principal: p, grant: g } = action;
       return (
@@ -208,6 +217,28 @@ function ActionPanel({ action, onDone, onCancel }: { action: Action; onDone: (te
       );
     }
   }
+}
+
+// RenameForm corrects a principal's display name, which is the printed name on later signatures
+// (SPEC-008-R17). Signatures already applied keep the name they were signed with.
+function RenameForm({ principal, onDone, onCancel }: { principal: Principal; onDone: (text: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState(principal.display_name);
+  return (
+    <ReasonForm
+      title={`Rename ${principal.handle}`}
+      submitLabel="Rename"
+      onCancel={onCancel}
+      onSubmit={async (reason) => {
+        if (!name.trim()) throw new Error('Display name must not be blank.');
+        await renamePrincipal(principal.id, name.trim(), reason);
+        onDone(`Renamed ${principal.handle} to ${name.trim()}.`);
+      }}
+    >
+      <label htmlFor="rename-name">Display name</label>
+      <input id="rename-name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <p className="muted">This is the printed name on their future signatures. Signatures already applied keep the old name.</p>
+    </ReasonForm>
+  );
 }
 
 function GrantForm({ principal, onDone, onCancel }: { principal: Principal; onDone: (text: string) => void; onCancel: () => void }) {

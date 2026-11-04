@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
+  ApiError,
   decideChangeSet,
   getChangeSet,
   getMe,
@@ -107,6 +108,11 @@ function ChangeItemView({ item, current }: { item: ChangeItem; current: unknown 
   );
 }
 
+// humanOf names the human behind an actor: "dana via bot" acts for dana.
+function humanOf(actor: string): string {
+  return actor.split(' via ')[0];
+}
+
 type CardProps = { summary: ChangeSetSummary; actor: string | null; onDecided: () => void };
 
 // ChangeSetCard shows one proposal. Expanding it loads the items. Commit, Reject and Withdraw each ask for a reason first.
@@ -118,9 +124,13 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [changedNotice, setChangedNotice] = useState<string | null>(null);
 
   const panel = `inbox-panel-${summary.id}`;
   const isAuthor = actor !== null && summary.author === actor;
+  // A correction can't be committed by its author, or by the human an agent author acts for (SPEC-008-R09).
+  const invalidated = detail ? detail.invalidates.reduce((n, r) => n + r.signatures, 0) : 0;
+  const hideCommit = detail !== null && detail.invalidates.length > 0 && actor !== null && humanOf(summary.author) === humanOf(actor);
 
   function toggle() {
     const next = !open;
@@ -136,6 +146,7 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
     setDecision(d);
     setReason('');
     setError(null);
+    setChangedNotice(null);
   }
 
   async function decide(e: FormEvent<HTMLFormElement>) {
@@ -144,12 +155,28 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
     setSaving(true);
     setError(null);
     try {
-      await decideChangeSet(summary.id, decision, reason.trim());
+      // The hash is of the items shown, so a commit can't land on items the reviewer never read (SPEC-008-R20).
+      await decideChangeSet(summary.id, decision, reason.trim(), decision === 'commit' ? detail?.items_sha256 : undefined);
       // A commit changes records, so the open views should reload their values.
       if (decision === 'commit') window.dispatchEvent(new CustomEvent('labrat:revised'));
       setDecision(null);
       onDecided();
     } catch (err: unknown) {
+      if (decision === 'commit' && err instanceof ApiError && err.status === 409) {
+        // The items may have been replaced since they were shown: reload them for the reviewer to read again.
+        try {
+          const fresh = await getChangeSet(summary.id);
+          const stale = fresh.items_sha256 !== detail?.items_sha256;
+          setDetail(fresh);
+          if (stale) {
+            setDecision(null);
+            setChangedNotice('The items changed since you opened this change set. Read the reloaded items, then commit again.');
+            return;
+          }
+        } catch {
+          // Fall through to the server's message.
+        }
+      }
       setError(errorMessage(err));
     } finally {
       setSaving(false);
@@ -190,11 +217,25 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
             </ol>
           )}
 
+          {detail && detail.invalidates.length > 0 && (
+            <p className="error">
+              Committing invalidates {invalidated} {invalidated === 1 ? 'signature' : 'signatures'} and returns{' '}
+              {detail.invalidates.length === 1 ? 'the run' : `${detail.invalidates.length} runs`} for re-signing.
+            </p>
+          )}
+          {changedNotice && (
+            <p role="alert" className="error">
+              {changedNotice}
+            </p>
+          )}
+
           {decision === null ? (
             <div className="actions">
-              <button type="button" aria-label={`Commit ${summary.title}`} onClick={() => choose('commit')}>
-                Commit
-              </button>
+              {detail && !hideCommit && (
+                <button type="button" aria-label={`Commit ${summary.title}`} onClick={() => choose('commit')}>
+                  Commit
+                </button>
+              )}
               <button type="button" aria-label={`Reject ${summary.title}`} onClick={() => choose('reject')}>
                 Reject
               </button>

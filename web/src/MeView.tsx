@@ -56,6 +56,10 @@ export default function MeView() {
             </tr>
           )}
           <tr>
+            <th scope="row">Tenant mode</th>
+            <td>{me.tenant_gxp ? 'GxP mode' : 'Non-GxP mode'}</td>
+          </tr>
+          <tr>
             <th scope="row">Signed in with</th>
             <td>{me.auth === 'dev' ? 'Development headers (not for regulated use)' : <span className="mono">{me.issuer}</span>}</td>
           </tr>

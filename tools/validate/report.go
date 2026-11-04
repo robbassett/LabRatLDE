@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,6 +198,67 @@ func goTest(dir string) (map[string]testResult, bool, error) {
 		return nil, false, err
 	}
 	return results, true, nil
+}
+
+// e2eSuite is a suite in Playwright's JSON report. Suites nest when a file uses describe.
+type e2eSuite struct {
+	Specs []struct {
+		Title string `json:"title"`
+		OK    bool   `json:"ok"`
+		Tests []struct {
+			Status string `json:"status"`
+		} `json:"tests"`
+	} `json:"specs"`
+	Suites []e2eSuite `json:"suites"`
+}
+
+// readE2EResults reads Playwright's JSON report at path and returns one result per
+// test, keyed "web/e2e.<title>". It returns none when the file is missing or its
+// stats.startTime is before notBefore (the HEAD commit's time): a stale run proves
+// nothing about this commit. A skipped test is "skip", as in go test.
+func readE2EResults(path string, notBefore time.Time) (map[string]testResult, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rep struct {
+		Stats struct {
+			StartTime string `json:"startTime"`
+		} `json:"stats"`
+		Suites []e2eSuite `json:"suites"`
+	}
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	started, err := time.Parse(time.RFC3339, rep.Stats.StartTime)
+	if err != nil || started.Before(notBefore) {
+		return nil, nil
+	}
+
+	results := map[string]testResult{}
+	var walk func(suites []e2eSuite)
+	walk = func(suites []e2eSuite) {
+		for _, s := range suites {
+			for _, sp := range s.Specs {
+				res := "fail"
+				if sp.OK {
+					res = "pass"
+				}
+				for _, t := range sp.Tests {
+					if t.Status == "skipped" {
+						res = "skip"
+					}
+				}
+				results[e2ePackage+"."+sp.Title] = testResult{Result: res}
+			}
+			walk(s.Suites)
+		}
+	}
+	walk(rep.Suites)
+	return results, nil
 }
 
 // writeReport writes report.json, report.sha256 and report.md into dir and

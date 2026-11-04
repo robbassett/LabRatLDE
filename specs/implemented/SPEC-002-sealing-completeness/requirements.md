@@ -50,6 +50,8 @@ Shared fixture: sample `S` →used→ run `R` →wasGeneratedBy→ dataset `D` (
 - Given the same fixture but `R` only `completed`, it is false for `R` and `D`.
 - Given the same fixture but `R` `aborted`, it is true for `R` and `D`.
 
+> **Superseded by SPEC-008** (2026-11-04): a node is also sealed once its run has at least one valid signature, so the first signature seals; a run with every signature invalidated is unsealed. A `signed` run with no signature records (signed before SPEC-008) stays sealed. See [SPEC-008](../../SPEC-008-electronic-signatures/requirements.md) R08.
+
 **SPEC-002-R02**: inserting reagent `X` →used→ `R` fails with `LDE04`. Inserting new node `Z` →wasDerivedFrom→ `D` (that is, `to_id = D`) fails with `LDE04`.
 
 **SPEC-002-R03**: inserting `R` →wasGeneratedBy→ new dataset `D2` fails with `LDE04`.

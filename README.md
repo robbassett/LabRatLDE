@@ -95,8 +95,8 @@ The chain isn't stored *in* PostgreSQL. It is **enforced by** PostgreSQL:
 | Can't backdate | Timestamps come from the DB clock; trigger rejects anything not current |
 | Can't edit or delete | `UPDATE`/`DELETE`/`TRUNCATE` rejected by trigger for *every* role, and never granted |
 | Can't see other tenants | Row-Level Security, `FORCE`d, fail-closed when no tenant is set |
-| Can't sign without meaning | Signing requires a stated meaning (§11.50), bound into the hash |
-| Can't edit a signed run | Trigger seals the row; corrections are new, linked runs |
+| Can't sign without meaning | A signature carries a meaning from a controlled list, the signer's printed name and the SHA-256 of the record as signed (§11.50, §11.70); the audit event binds the meaning into the hash |
+| Can't edit a signed run | The first signature seals the run. A correction is a reviewed change set that invalidates the signatures and returns the run for re-signing; signatures are never edited or deleted |
 
 And it's **self-verifying three ways**, which must agree:
 
@@ -263,10 +263,20 @@ curl -s -H "X-LDE-Tenant: $T" -H "X-LDE-Actor: hplc-01@lab.example" \
      -H 'Content-Type: application/x-ndjson' --data-binary @examples/streams/hplc-uv.ndjson \
      "$API/instruments/$HPLC/stream?run_id=$RUN" | jq
 
-# 5. Complete and sign. The signature meaning is bound into the audit hash.
+# 5. Complete, then sign. The default policy has two steps, "author" then "review",
+#    and nobody may sign twice, so a second person signs step 2. In dev every new handle
+#    holds every role and needs no re-authentication (docs/signatures.md).
 curl -s "${H[@]}" $API/runs/$RUN/transitions -d '{"to":"completed"}' | jq .state
-curl -s "${H[@]}" $API/runs/$RUN/transitions -d '{"to":"signed","reason":"approved"}' | jq .state
-curl -s "${H[@]}" $API/runs/$RUN/transitions -d '{"to":"running"}'   # 409: signed runs are sealed
+R=(-H "X-LDE-Tenant: $T" -H "X-LDE-Actor: reviewer@lab.example" -H "Content-Type: application/json")
+M=$(curl -s "${H[@]}" $API/runs/$RUN/manifest | jq -r .sha256)    # the record as you saw it
+curl -s "${H[@]}" $API/runs/$RUN/signatures \
+     -d "{\"step\":1,\"meaning\":\"author\",\"manifest_sha256\":\"$M\"}" | jq '{printed_name, meaning, signed_at}'
+M=$(curl -s "${R[@]}" $API/runs/$RUN/manifest | jq -r .sha256)
+curl -s "${R[@]}" $API/runs/$RUN/signatures \
+     -d "{\"step\":2,\"meaning\":\"review\",\"manifest_sha256\":\"$M\"}" | jq '{printed_name, meaning, signed_at}'
+curl -s "${H[@]}" $API/runs/$RUN | jq .state                       # "signed"
+curl -s "${H[@]}" $API/runs/$RUN/transitions -d '{"to":"signed"}'  # 400: sign through /signatures
+curl -s "${H[@]}" $API/runs/$RUN/transitions -d '{"to":"running"}' # 409: no such transition
 
 # 6. Full lineage around the run: sample in, instrument dataset out
 NODE=$(curl -s "${H[@]}" $API/runs/$RUN | jq -r .node_id)
@@ -306,7 +316,7 @@ the database owner runs `REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC`. `make
 spec has no passing test, if a test cites an unknown requirement, or if `go test` fails. Only a report from a clean,
 committed tree should be kept as evidence; a dirty tree is stamped `NOT FOR FILING`. Either way this is
 test-traceability evidence, not a validation package: a regulatory filing also needs a risk assessment, approved
-IQ/OQ protocols and the Part 11 features still on the roadmap (e-signatures).
+IQ/OQ protocols and the Part 11 features still on the roadmap.
 
 Configuration is environment-only; see [`.env.example`](.env.example).
 
@@ -321,7 +331,11 @@ Configuration is environment-only; see [`.env.example`](.env.example).
 | `GET`  | `/v1/experiments/{id}` | Fetch experiment and parsed protocol metadata |
 | `POST` | `/v1/runs` | Start a run; link its inputs with `prov:used` |
 | `GET`  | `/v1/runs/{id}` | Fetch run state |
-| `POST` | `/v1/runs/{id}/transitions` | Advance the state machine; `signed` requires a meaning |
+| `POST` | `/v1/runs/{id}/transitions` | Advance the state machine; `to: signed` is `400` (sign instead) |
+| `GET`  | `/v1/runs/{id}/manifest` | The canonical manifest to sign, its SHA-256, and what changed since the last valid signature |
+| `POST`/`GET` | `/v1/runs/{id}/signatures` | Apply the next signing step, or list a run's signatures (see [docs/signatures.md](docs/signatures.md)) |
+| `GET`  | `/v1/inbox/signatures` | Runs waiting for the caller's signature |
+| `PATCH` | `/v1/experiments/{id}/signing-policy` | Change an experiment's signing policy (`qa`/`admin` in GxP; reason) |
 | `POST` | `/v1/lineage/nodes` | Add a sample, reagent, dataset, … |
 | `POST` | `/v1/lineage/edges` | Link nodes (cycles → `409`) |
 | `GET`  | `/v1/lineage/{id}` | Provenance closure; `?direction=upstream\|downstream\|both` |
@@ -333,6 +347,7 @@ Configuration is environment-only; see [`.env.example`](.env.example).
 | `GET`  | `/v1/meta` | Environment and sign-in settings (no auth) |
 | `GET`  | `/v1/me` | The caller, who an agent acts for, and their roles |
 | `GET`/`POST` | `/v1/principals` | List or provision principals (admin) |
+| `PATCH` | `/v1/principals/{id}` | Correct a display name (admin, reason); it is the printed name on later signatures |
 | `POST` | `/v1/principals/{id}/disable` | Disable a principal (admin, reason) |
 | `POST` | `/v1/role-grants`, `/v1/role-grants/{id}/revoke` | Grant or revoke a role (admin, reason) |
 | `GET`/`POST` | `/v1/agent-delegations`, `…/{id}/end` | Let an agent act for a human, or stop it (admin, reason) |
@@ -341,8 +356,10 @@ Run lifecycle:
 
 ```
 planned ──► running ◄──► paused
-running ──► completed | failed ──► signed     (signed is terminal and sealed)
-planned | running | paused ──► aborted        (requires a reason)
+running ──► completed | failed                (the first signature seals the run)
+completed | failed ──► signed                 (only by the last policy step, through /signatures)
+signed ──► completed | failed                 (only a committed correction, which invalidates the signatures)
+planned | running | paused ──► aborted        (requires a reason; terminal and sealed)
 ```
 
 ---
@@ -389,17 +406,17 @@ honest stubs. Do not use for regulated work yet.
 |---|---|
 | Hash-chained audit ledger (Go + DB-enforced) | ✅ implemented; Go unit tests + Python cross-check; DB guarantees covered by `make test-integration` |
 | Lineage DAG, DB-enforced acyclicity | ✅ implemented |
-| Run state machine, sealed signed runs | ✅ implemented; signed and aborted runs seal their node and generated datasets in the DB (SPEC-002) |
+| Run state machine, sealed runs | ✅ implemented; aborted runs and runs with a valid signature seal their node and generated datasets in the DB (SPEC-002, SPEC-008) |
 | NDJSON instrument ingest | ✅ implemented |
 | Row-Level Security tenant isolation | ✅ implemented; covered by `make test-integration` |
 | Authentication, roles and agents (OIDC bearer tokens, DB-enforced role gates; SPEC-006) | ✅ implemented; dev headers only in `LDE_ENV=dev`. See [docs/identity.md](docs/identity.md) |
-| §11.200 signature re-authentication | 🔜 OIDC step-up (SPEC-008) |
+| Electronic signatures: printed name, meaning, manifest digest, signing policy, OIDC step-up re-authentication, corrections (SPEC-008) | ✅ implemented. See [docs/signatures.md](docs/signatures.md) |
 | External anchoring of chain heads (RFC 3161 / transparency log) | 🔜 roadmap |
 | Bulk data export formats and archival storage | ❓ architecture not decided; needs a spec |
 | Traceability report (`make validate`) and install checks (`labrat iq`) | ✅ implemented (SPEC-004); evidence only, not a validation package |
 | Validation documentation (risk assessment, IQ/OQ protocols, expected vs actual results) | 🔜 roadmap (SPEC-020) |
 | Web UI: workspace shell (explorer, tabs, lineage, audit viewer; SPEC-005) | ✅ implemented; read-only views, no Playwright tests yet. Editing and charts are on the roadmap |
-| Revisions, change sets and notes: append-only history, reviewed edits, diff and blame (SPEC-007) | 🚧 in progress; sealed records wait for SPEC-008. See [docs/revisions.md](docs/revisions.md) |
+| Revisions, change sets and notes: append-only history, reviewed edits, diff and blame (SPEC-007) | 🚧 in progress. Corrections to signed records go through reviewed change sets (SPEC-008). See [docs/revisions.md](docs/revisions.md) |
 
 The phased plan, design decisions and reserved spec numbers are in
 [`specs/ROADMAP.md`](specs/ROADMAP.md).

@@ -1,6 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// SPEC-008 feeds test-results/results.json into `make validate`.
 export default defineConfig({
   testDir: 'e2e',
   use: {

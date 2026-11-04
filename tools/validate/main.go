@@ -68,9 +68,30 @@ func run() (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	e2eCites, err := scanE2E(*root)
+	if err != nil {
+		return 2, err
+	}
+	cites = append(cites, e2eCites...)
 	results, goTestPassed, err := goTest(*root)
 	if err != nil {
 		return 2, err
+	}
+	// Playwright results count only if they were written at or after the HEAD commit.
+	commitTime, err := gitOutput(*root, "log", "-1", "--format=%cI", "HEAD")
+	if err != nil {
+		return 2, err
+	}
+	notBefore, err := time.Parse(time.RFC3339, commitTime)
+	if err != nil {
+		return 2, err
+	}
+	e2e, err := readE2EResults(filepath.Join(*root, "web", "test-results", "results.json"), notBefore)
+	if err != nil {
+		return 2, err
+	}
+	for k, v := range e2e {
+		results[k] = v
 	}
 	finishedAt := time.Now().UTC().Truncate(time.Second)
 

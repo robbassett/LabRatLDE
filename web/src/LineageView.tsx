@@ -2,9 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import {
+  ApiError,
   blame,
   editNode,
   getLineage,
+  proposeChangeSet,
   type BlameEntry,
   type Lineage,
   type LineageDirection,
@@ -153,8 +155,20 @@ export default function LineageView({ id, open, rename }: Props) {
   }
 
   // saveNode reloads the graph and the node's blame, so the panel and the graph show the saved values.
-  async function saveNode(nodeId: string, edit: { label?: string; attrs?: Record<string, unknown> }, reason: string) {
-    await editNode(nodeId, edit, reason);
+  // A sealed node refuses a direct edit with 409, so the edit is proposed as a correction instead
+  // (SPEC-008-R09, R10).
+  async function saveNode(
+    nodeId: string,
+    edit: { label?: string; attrs?: Record<string, unknown> },
+    reason: string,
+  ): Promise<void | 'proposed'> {
+    try {
+      await editNode(nodeId, edit, reason);
+    } catch (err: unknown) {
+      if (!(err instanceof ApiError) || err.status !== 409) throw err;
+      await proposeChangeSet('Correct a sealed node', reason, [{ op: 'update_node', node_id: nodeId, ...edit }]);
+      return 'proposed';
+    }
     const [l, b] = await Promise.all([getLineage(id, direction), blame('lineage_node', nodeId)]);
     setFetched({ status: 'ready', lineage: l });
     setBlamed({ id: nodeId, fields: b.fields });

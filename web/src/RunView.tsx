@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { blame, editRunParams, getRun, listAuditEvents, type AuditEvent, type RunDetail } from './api';
+import { blame, editRunParams, getRun, listAuditEvents, proposeChangeSet, type AuditEvent, type RunDetail } from './api';
 import EditField from './EditField';
 import Notes from './Notes';
 import SignaturesPanel from './SignaturesPanel';
@@ -44,6 +44,10 @@ export default function RunView({ id, open }: Props) {
   if (state.status === 'error') return <p role="alert" className="error">{state.message}</p>;
 
   const { run, events, changed } = state;
+  // A run with a valid signature changes only through a reviewed correction (SPEC-008-R09, R10).
+  // An aborted run, or a signed one with no signature rows (signed before SPEC-008), can't be corrected.
+  const proposeOnly = run.signatures.some((s) => s.valid);
+  const readOnly = !proposeOnly && (run.state === 'aborted' || run.state === 'signed');
 
   return (
     <article className="view">
@@ -70,8 +74,15 @@ export default function RunView({ id, open }: Props) {
         value={JSON.stringify(run.params ?? {}, null, 2)}
         json
         changed={changed}
+        proposeOnly={proposeOnly}
+        readOnly={readOnly}
         onSave={async (value, reason) => {
-          await editRunParams(id, JSON.parse(value) as Record<string, unknown>, reason);
+          const params = JSON.parse(value) as Record<string, unknown>;
+          if (proposeOnly) {
+            await proposeChangeSet(`Correct params of run ${id.slice(0, 8)}`, reason, [{ op: 'update_run_params', run_id: id, params }]);
+            return 'proposed';
+          }
+          await editRunParams(id, params, reason);
           setState({ status: 'ready', ...(await loadRun(id)) });
         }}
       />
@@ -162,7 +173,7 @@ export default function RunView({ id, open }: Props) {
 
       <section>
         <h2>Notes</h2>
-        <Notes nodeId={run.node_id} />
+        <Notes nodeId={run.node_id} proposeOnly={proposeOnly} readOnly={readOnly} />
       </section>
     </article>
   );

@@ -1,11 +1,14 @@
 import MarkdownIt from 'markdown-it';
 import { useEffect, useState, type FormEvent } from 'react';
-import { addNote, editNote, listNotes, type Note } from './api';
+import { addNote, editNote, listNotes, proposeChangeSet, type Note } from './api';
 
 // HTML is disabled, so rendered output cannot contain author-supplied markup.
 const md = new MarkdownIt({ html: false, linkify: false });
 
-type Props = { nodeId: string };
+// proposeOnly: the record is signed, so editing a note that predates the seal proposes a correction.
+// readOnly: the record is frozen and can't be corrected. Annotations stay editable either way
+// (SPEC-008-R09, R10).
+type Props = { nodeId: string; proposeOnly?: boolean; readOnly?: boolean };
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -13,7 +16,7 @@ function errorMessage(err: unknown): string {
 
 // Notes lists a lineage node's notes, oldest first, with forms to add and edit them.
 // A successful note edit dispatches labrat:revised, as the field editors do.
-export default function Notes({ nodeId }: Props) {
+export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -28,6 +31,8 @@ export default function Notes({ nodeId }: Props) {
   const [editError, setEditError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
+  // The note whose correction was just proposed.
+  const [proposedId, setProposedId] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -76,6 +81,7 @@ export default function Notes({ nodeId }: Props) {
     setEditBody(n.body);
     setEditReason('');
     setEditError(null);
+    setProposedId(null);
   }
 
   function cancelEdit() {
@@ -83,13 +89,18 @@ export default function Notes({ nodeId }: Props) {
     setEditError(null);
   }
 
-  async function saveEdit(e: FormEvent<HTMLFormElement>, id: string) {
+  async function saveEdit(e: FormEvent<HTMLFormElement>, id: string, propose: boolean) {
     e.preventDefault();
     setSaving(true);
     setEditError(null);
     try {
-      await editNote(id, editBody, editReason.trim());
-      window.dispatchEvent(new CustomEvent('labrat:revised'));
+      if (propose) {
+        await proposeChangeSet('Correct a note', editReason.trim(), [{ op: 'edit_note', note_id: id, body: editBody }]);
+        setProposedId(id);
+      } else {
+        await editNote(id, editBody, editReason.trim());
+        window.dispatchEvent(new CustomEvent('labrat:revised'));
+      }
       setEditId(null);
       await reload();
     } catch (err: unknown) {
@@ -111,10 +122,15 @@ export default function Notes({ nodeId }: Props) {
 
       {notes.length > 0 && (
         <ol className="note-list">
-          {notes.map((n) =>
-            editId === n.id ? (
+          {notes.map((n) => {
+            const propose = !n.annotation && !!proposeOnly && !readOnly;
+            const frozen = !n.annotation && !!readOnly;
+            return editId === n.id ? (
               <li key={n.id} className="note">
-                <form className="edit-form" onSubmit={(e) => saveEdit(e, n.id)}>
+                <form className="edit-form" onSubmit={(e) => saveEdit(e, n.id, propose)}>
+                  {propose && (
+                    <p className="muted">This record is signed. Your change is proposed as a correction, and a reviewer must commit it.</p>
+                  )}
                   <label>
                     Note
                     <textarea
@@ -141,7 +157,7 @@ export default function Notes({ nodeId }: Props) {
                   )}
                   <div className="actions">
                     <button type="submit" disabled={saving || editReason.trim() === '' || editBody.trim() === ''}>
-                      Save
+                      {propose ? 'Propose correction' : 'Save'}
                     </button>
                     <button type="button" onClick={cancelEdit} disabled={saving}>
                       Cancel
@@ -157,12 +173,21 @@ export default function Notes({ nodeId }: Props) {
                   {n.rev > 1 && <span className="note-tag"> edited (rev {n.rev})</span>}
                 </p>
                 <div className="note-body" dangerouslySetInnerHTML={{ __html: md.render(n.body) }} />
-                <button type="button" aria-label={`Edit note from ${n.created_by} at ${n.created_at}`} onClick={() => startEdit(n)}>
-                  Edit
-                </button>
+                {frozen ? (
+                  <p className="muted">Read-only: this record is frozen.</p>
+                ) : (
+                  <button type="button" aria-label={`Edit note from ${n.created_by} at ${n.created_at}`} onClick={() => startEdit(n)}>
+                    Edit
+                  </button>
+                )}
+                {proposedId === n.id && (
+                  <p role="status">
+                    Correction proposed. A reviewer can commit it from the <a href="#/inbox">Review inbox</a>.
+                  </p>
+                )}
               </li>
-            ),
-          )}
+            );
+          })}
         </ol>
       )}
 

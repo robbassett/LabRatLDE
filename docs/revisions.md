@@ -13,7 +13,7 @@ which is implemented; this page describes what it delivers.
 |---|---|---|
 | Lineage node | `lineage_node` | `label`, `attrs` |
 | Run | `run` | `params` |
-| Experiment | `experiment` | `title` |
+| Experiment | `experiment` | `title`, `signing_policy` |
 | Note | `note` | `body` |
 
 Nothing else has revisions. A run's state change, a protocol version, an
@@ -34,6 +34,7 @@ are applied in order, all or none. Each item is one of:
 | `update_node` | sets `label` and/or `attrs` of a lineage node |
 | `update_run_params` | replaces a run's `params` |
 | `set_experiment_title` | sets an experiment's `title` |
+| `set_signing_policy` | replaces an experiment's signing policy. `PATCH /v1/experiments/{id}/signing-policy` is the direct edit; only the roles the tenant's GxP mode names may commit it ([signatures.md](signatures.md)) |
 | `edit_note` | replaces a note's `body` |
 | `add_node`, `add_edge`, `add_note` | creates a node, an edge or a note |
 
@@ -60,7 +61,7 @@ manifests. Its author may replace its title, reason and items with `PUT`.
 | Propose a change set | a principal with the `scientist` role: a human, an agent acting for one, or a service |
 | Replace the items of a proposal | its author, while it is `proposed` and they still hold `scientist` |
 | Withdraw a proposal | its author, while it is `proposed` and they still hold `scientist`. If they no longer do, a scientist rejects it instead |
-| Commit or reject a proposal | a **human** with the `scientist` role. Agents and services get `403` |
+| Commit or reject a proposal | a **human** with the `scientist` role. Agents and services get `403`. A correction to a signed record needs a human `reviewer` or `qa` instead, who isn't its author, and a signing-policy change needs the role the tenant's GxP mode names; neither needs `scientist` |
 | Direct edit | a **human** with the `scientist` role, since it commits its own change set |
 
 Agents and services propose only. The database sets each change set's `source`
@@ -71,11 +72,16 @@ set.
 
 ## Sealed records
 
-A signed or aborted run seals its lineage node, the datasets it generated and
-its params (SPEC-002). Those records **can't be changed yet**. A change set that
-touches one can be proposed, but its commit returns `409`, and so does a direct
-edit. Reviewing and re-signing corrections to sealed records is the job of
-[SPEC-008](../specs/SPEC-008-electronic-signatures/requirements.md).
+An aborted run, or a run with at least one valid signature, seals its lineage
+node, the datasets it generated and its params (SPEC-002, SPEC-008). A direct
+edit of a sealed record returns `409`. A change set that touches one can be
+proposed, and for a run with valid signatures it can be committed by a reviewer or QA who
+isn't its author (nor the human an agent author acts for). The commit must carry
+the `items_sha256` of the items they read, and it invalidates the run's
+signatures and returns the run for re-signing; see
+[signatures.md](signatures.md). For an aborted run, or a run signed before
+SPEC-008 (it has no signature records), the commit still returns `409`: those
+runs stay frozen.
 
 Notes follow a different rule:
 

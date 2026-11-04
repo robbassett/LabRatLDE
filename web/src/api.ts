@@ -566,12 +566,14 @@ export function proposeChangeSet(title: string, reason: string, items: ChangeIte
   return post('/v1/change-sets', { title, reason, items });
 }
 
+// A commit carries itemsSha256, the hash of the items the reviewer read (SPEC-008-R20).
 export function decideChangeSet(
   id: string,
   decision: 'commit' | 'reject' | 'withdraw',
   reason: string,
+  itemsSha256?: string,
 ): Promise<ChangeSet> {
-  return post(`/v1/change-sets/${encodeURIComponent(id)}/${decision}`, { reason });
+  return post(`/v1/change-sets/${encodeURIComponent(id)}/${decision}`, { reason, items_sha256: itemsSha256 });
 }
 
 export function getManifest(runId: string): Promise<RunManifest> {

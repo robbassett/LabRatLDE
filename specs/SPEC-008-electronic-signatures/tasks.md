@@ -287,22 +287,22 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
   - Files: `web/src/SignDialog.tsx` (new), `web/src/SignaturesPanel.tsx`, `web/src/styles.css`
   - Do: as design §3. A `<dialog>` with focus returned on close. It shows the manifest summary and `changes`. A required confirmation checkbox reads "By signing I confirm I have reviewed this record, and my signature means: <meaning>". On a 409 hash mismatch it reloads the manifest and says the record changed. Errors go in `role="alert"`. In prod, confirm calls `beginReauth`; on return, `takePendingSign` resumes and posts with `reauthToken()`. The Sign button shows when the user holds the next step's role and hasn't validly signed.
   - Verify: in dev, sign a run with the keyboard only. A signature appears in the panel and in the audit viewer.
-- [ ] 5.6 Sign-off inbox
+- [x] 5.6 Sign-off inbox
   - Requirements: SPEC-008-R05 (support)
   - Files: `web/src/SignoffView.tsx` (new), `web/src/tabs.ts`, `web/src/Workspace.tsx`, `web/src/Explorer.tsx`
   - Do: the singleton tab `signoff`, "Sign-off inbox", in the explorer and palette. A table of `SignoffItem`, oldest first, where each row opens the run.
   - Verify: as a dev user, a completed run is listed and opens. After signing, it leaves that user's list.
-- [ ] 5.7 Proposing a correction
+- [x] 5.7 Proposing a correction
   - Requirements: SPEC-008-R09, SPEC-008-R10 (UI side)
   - Files: `web/src/EditField.tsx`, `web/src/RunView.tsx`, `web/src/LineageView.tsx`, `web/src/Notes.tsx`
   - Do: `EditField` gains an optional `proposeOnly` prop. The save button reads "Propose correction", the form says it needs a reviewer, and the result links to the review inbox. A run with any signature passes it, and its `onSave` calls `POST /v1/change-sets`. Aborted runs and runs that are `signed` with no signature rows pass `readOnly` instead. The lineage view (a node whose edit returns 409 is proposed instead) and frozen notes get the same treatment, using the run's `signatures` where the view has them.
   - Verify: on a signed run in dev, propose a params change. It appears in the review inbox, and the run is unchanged.
-- [ ] 5.8 Review inbox warning
+- [x] 5.8 Review inbox warning
   - Requirements: SPEC-008-R09, SPEC-008-R10 (UI side)
   - Files: `web/src/InboxView.tsx`
   - Do: when `invalidates` isn't empty, show the warning from design §3 in the expanded card. Hide Commit for the author. Commit sends the `items_sha256` of the items shown; on a 409 the card reloads them and says they changed. After a commit, the existing `labrat:revised` event reloads the run view.
   - Verify: as another dev user, commit the 5.7 proposal. The signatures show as invalidated, and the run returns to `completed`.
-- [ ] 5.9 Signing policy and rename controls
+- [x] 5.9 Signing policy and rename controls
   - Requirements: SPEC-008-R15, SPEC-008-R17
   - Files: `web/src/ExperimentView.tsx`, `web/src/PrincipalsView.tsx`, `web/src/MeView.tsx`
   - Do: the experiment view shows the steps, with an edit form (add, remove and reorder steps, a meaning and role select per step, and a required reason) when `/v1/me` roles allow it for `tenant_gxp`. A denial still shows the API's message. The principals view gets a rename form with a reason. The Me view shows "GxP mode" or "Non-GxP mode".
@@ -310,7 +310,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 6: Traceability and documentation
 
-- [ ] 6.1 Playwright results in `make validate`
+- [x] 6.1 Playwright results in `make validate`
   - Requirements: SPEC-008-R12 (support), SPEC-004 harness
   - Files: `tools/validate/cites.go`, `tools/validate/report.go`, `tools/validate/main.go`, `tools/validate/validate_test.go`, `web/e2e/README.md`, `web/playwright.config.ts`
   - Do:
@@ -319,7 +319,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - Add one case to the existing verdict table for a Playwright citation with no result.
     - Update the README and remove "SPEC-008 feeds" from the config comment.
   - Verify: `go test ./tools/validate/`. `make e2e && make validate` shows `SPEC-008-R12` verified with both tests.
-- [ ] 6.2 Documentation and superseded requirements
+- [x] 6.2 Documentation and superseded requirements
   - Requirements: SPEC-008-R01–R19
   - Files: `docs/signatures.md` (new), `docs/identity.md`, `docs/revisions.md`, `README.md`, `.env.example`, `specs/implemented/SPEC-001-core-integrity/requirements.md`, `specs/implemented/SPEC-002-sealing-completeness/requirements.md`, `specs/implemented/SPEC-006-identity-and-roles/requirements.md`, `specs/implemented/SPEC-007-revisions-and-change-sets/requirements.md`
   - Do:
