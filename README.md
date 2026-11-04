@@ -415,7 +415,7 @@ honest stubs. Do not use for regulated work yet.
 | Bulk data export formats and archival storage | ❓ architecture not decided; needs a spec |
 | Traceability report (`make validate`) and install checks (`labrat iq`) | ✅ implemented (SPEC-004); evidence only, not a validation package |
 | Validation documentation (risk assessment, IQ/OQ protocols, expected vs actual results) | 🔜 roadmap (SPEC-020) |
-| Web UI: workspace shell (explorer, tabs, lineage, audit viewer; SPEC-005) | ✅ implemented; read-only views, no Playwright tests yet. Editing and charts are on the roadmap |
+| Web UI: workspace shell (explorer, tabs, lineage, audit viewer; SPEC-005) | ✅ implemented; editing since SPEC-007, and a Playwright test since SPEC-008. Charts are on the roadmap |
 | Revisions, change sets and notes: append-only history, reviewed edits, diff and blame (SPEC-007) | 🚧 in progress. Corrections to signed records go through reviewed change sets (SPEC-008). See [docs/revisions.md](docs/revisions.md) |
 
 The phased plan, design decisions and reserved spec numbers are in

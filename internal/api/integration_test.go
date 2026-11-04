@@ -983,6 +983,16 @@ func TestSignatureRecord(t *testing.T) {
 	if state != "signed" || signed != 1 {
 		t.Errorf("after step 2: state %s with %d run.signed events, want signed with 1", state, signed)
 	}
+	// Once signed, the manifest still reads as what was signed: it holds the outcome, not "signed".
+	var signedSHA string
+	if err := db.Pool.QueryRow(ctx, `SELECT encode(manifest_sha256, 'hex') FROM signatures WHERE entity_id = $1 AND step = 2`, runID).Scan(&signedSHA); err != nil {
+		t.Fatal(err)
+	}
+	var now manifestResponse
+	sendWant(t, srv, mintToken(t, key, claims(f.tenant, "alice")), nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &now)
+	if now.SHA256 != signedSHA {
+		t.Errorf("manifest of a signed run = %s, want the signed %s", now.SHA256, signedSHA)
+	}
 }
 
 // SPEC-008-R04

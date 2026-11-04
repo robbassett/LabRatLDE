@@ -139,7 +139,7 @@ BEGIN
        (OLD.id, OLD.tenant_id, OLD.kind, OLD.handle, OLD.email, OLD.issuer, OLD.subject, OLD.created_at) THEN
         RAISE EXCEPTION 'principal %: only enabled and display_name may change', OLD.handle USING ERRCODE = 'LDE03';
     END IF;
-    IF NEW.display_name IS DISTINCT FROM OLD.display_name AND btrim(NEW.display_name) = '' THEN
+    IF NEW.display_name IS DISTINCT FROM OLD.display_name AND NEW.display_name !~ '[^[:space:]]' THEN
         RAISE EXCEPTION 'principal %: display_name cannot be blank', OLD.handle USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;

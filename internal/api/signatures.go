@@ -62,7 +62,7 @@ func buildManifest(ctx context.Context, tx pgx.Tx, runID string) (text []byte, s
 		Inputs: []manifestInput{}, Datasets: []manifestDataset{}, Notes: []manifestNote{}}
 	var nodeID string
 	err = tx.QueryRow(ctx, `
-		SELECT r.experiment_id, r.protocol_version_id, encode(pv.sha256, 'hex'), r.state, r.node_id, r.params
+		SELECT r.experiment_id, r.protocol_version_id, encode(pv.sha256, 'hex'), COALESCE(r.signed_from, r.state), r.node_id, r.params
 		FROM runs r JOIN protocol_versions pv ON pv.id = r.protocol_version_id
 		WHERE r.id = $1`, runID,
 	).Scan(&m.ExperimentID, &m.ProtocolVersionID, &m.ProtocolSHA256, &m.State, &nodeID, &m.Params)

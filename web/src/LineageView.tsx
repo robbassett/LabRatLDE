@@ -166,6 +166,8 @@ export default function LineageView({ id, open, rename }: Props) {
       await editNode(nodeId, edit, reason);
     } catch (err: unknown) {
       if (!(err instanceof ApiError) || err.status !== 409) throw err;
+      // Only a correction can be proposed: a frozen node (aborted, or signed before signatures) can never commit one.
+      if (!err.message.includes('correction')) throw new Error('This record is frozen and cannot be corrected.');
       await proposeChangeSet('Correct a sealed node', reason, [{ op: 'update_node', node_id: nodeId, ...edit }]);
       return 'proposed';
     }

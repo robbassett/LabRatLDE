@@ -75,7 +75,7 @@ A signature needs the signer to log in again just before. In production the UI s
 
 Otherwise the request is `401` and nothing is written. If `LDE_OIDC_UI_CLIENT_ID` is not set, signing is `501`. The identity provider must honour `prompt=login` and return `auth_time`: see [identity.md](identity.md).
 
-**An ID token isn't single-use.** The server checks only how recent the login was, so one ID token can sign several runs, or several steps of a run by the same person, until it is `LDE_SIGN_REAUTH_MAX_AGE` old. The UI asks for a fresh login for every signature, but a client calling the API directly can reuse a token inside that window. Lower `LDE_SIGN_REAUTH_MAX_AGE` if that is too loose for your procedure.
+**An ID token isn't single-use.** The server checks only how recent the login was, so one ID token can sign several runs until it is `LDE_SIGN_REAUTH_MAX_AGE` old. The UI asks for a fresh login for every signature, but a client calling the API directly can reuse a token inside that window. Lower `LDE_SIGN_REAUTH_MAX_AGE` if that is too loose for your procedure.
 
 On a development server (`LDE_ENV=dev`) no token is needed, the signature records `reauth_method = dev`, and the UI says "Dev mode: no re-authentication". Dev signatures are not for regulated use.
 
