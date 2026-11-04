@@ -56,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/me", s.getMe)
 	v1.HandleFunc("GET /v1/principals", s.listPrincipals)
 	v1.HandleFunc("POST /v1/principals", s.createPrincipal)
+	v1.HandleFunc("PATCH /v1/principals/{id}", s.renamePrincipal)
 	v1.HandleFunc("POST /v1/principals/{id}/disable", s.disablePrincipal)
 	v1.HandleFunc("POST /v1/role-grants", s.createRoleGrant)
 	v1.HandleFunc("POST /v1/role-grants/{id}/revoke", s.revokeRoleGrant)
@@ -67,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/experiments", s.listExperiments)
 	v1.HandleFunc("GET /v1/experiments/{id}", s.getExperiment)
 	v1.HandleFunc("PATCH /v1/experiments/{id}", s.patchExperiment)
+	v1.HandleFunc("PATCH /v1/experiments/{id}/signing-policy", s.patchSigningPolicy)
 	v1.HandleFunc("POST /v1/experiments/{id}/protocol-versions", s.createProtocolVersion)
 	v1.HandleFunc("GET /v1/experiments/{id}/protocol-versions", s.listProtocolVersions)
 	v1.HandleFunc("GET /v1/protocol-versions/{id}", s.getProtocolVersion)
@@ -79,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/runs/{id}/manifest", s.getManifest)
 	v1.HandleFunc("POST /v1/runs/{id}/signatures", s.signRun)
 	v1.HandleFunc("GET /v1/runs/{id}/signatures", s.listSignatures)
+	v1.HandleFunc("GET /v1/inbox/signatures", s.listSignoffs)
 
 	v1.HandleFunc("POST /v1/lineage/nodes", s.createNode)
 	v1.HandleFunc("PATCH /v1/lineage/nodes/{id}", s.patchNode)

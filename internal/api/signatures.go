@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -214,46 +215,42 @@ func (s *Server) getManifest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// signature is a signature's JSON. A signature is valid until a committed
-// correction invalidates it.
-type signature struct {
-	ID                     string     `json:"id"`
-	Step                   int        `json:"step"`
-	Meaning                string     `json:"meaning"`
-	Signer                 string     `json:"signer"`
-	PrintedName            string     `json:"printed_name"`
-	SignedAt               time.Time  `json:"signed_at"`
-	ManifestSHA256         string     `json:"manifest_sha256"`
-	Comment                *string    `json:"comment"`
-	ReauthMethod           string     `json:"reauth_method"`
-	Valid                  bool       `json:"valid"`
-	InvalidatedAt          *time.Time `json:"invalidated_at"`
-	InvalidatedByChangeSet *string    `json:"invalidated_by_change_set"`
-	InvalidatedReason      *string    `json:"invalidated_reason"`
+// loadSignatures returns a run's signatures, oldest first. It is never nil.
+func loadSignatures(ctx context.Context, tx pgx.Tx, runID string) ([]domain.Signature, error) {
+	byRun, err := loadSignaturesFor(ctx, tx, []string{runID})
+	if err != nil {
+		return nil, err
+	}
+	return byRun[runID], nil
 }
 
-// loadSignatures returns a run's signatures, oldest first. It is never nil.
-func loadSignatures(ctx context.Context, tx pgx.Tx, runID string) ([]signature, error) {
+// loadSignaturesFor reads the signatures of several runs in one query, oldest
+// first. Every run id in runIDs has an entry, never nil.
+func loadSignaturesFor(ctx context.Context, tx pgx.Tx, runIDs []string) (map[string][]domain.Signature, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT s.id, s.step, s.meaning, p.handle, s.printed_name, s.signed_at, encode(s.manifest_sha256, 'hex'),
+		SELECT s.entity_id::text, s.id, s.step, s.meaning, p.handle, s.printed_name, s.signed_at, encode(s.manifest_sha256, 'hex'),
 		       s.comment, s.reauth_method, s.invalidated_at IS NULL, s.invalidated_at, s.invalidated_by_change_set::text, cs.reason
 		FROM signatures s
 		JOIN principals p ON p.id = s.signer_id
 		LEFT JOIN change_sets cs ON cs.id = s.invalidated_by_change_set
-		WHERE s.entity_type = 'run' AND s.entity_id = $1
-		ORDER BY s.signed_at, s.id`, runID)
+		WHERE s.entity_type = 'run' AND s.entity_id = ANY($1::uuid[])
+		ORDER BY s.signed_at, s.id`, runIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []signature{}
+	out := make(map[string][]domain.Signature, len(runIDs))
+	for _, id := range runIDs {
+		out[id] = []domain.Signature{}
+	}
 	for rows.Next() {
-		var s signature
-		if err := rows.Scan(&s.ID, &s.Step, &s.Meaning, &s.Signer, &s.PrintedName, &s.SignedAt, &s.ManifestSHA256,
+		var runID string
+		var s domain.Signature
+		if err := rows.Scan(&runID, &s.ID, &s.Step, &s.Meaning, &s.Signer, &s.PrintedName, &s.SignedAt, &s.ManifestSHA256,
 			&s.Comment, &s.ReauthMethod, &s.Valid, &s.InvalidatedAt, &s.InvalidatedByChangeSet, &s.InvalidatedReason); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		out[runID] = append(out[runID], s)
 	}
 	return out, rows.Err()
 }
@@ -345,7 +342,7 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 		comment = &req.Comment
 	}
 
-	var out signature
+	var out domain.Signature
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
 		reauthAt, method, err := s.checkReauth(ctx, tx, p, req.ReauthToken)
 		if err != nil {
@@ -419,6 +416,132 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, out)
 }
 
+// invalidateTouched marks every valid signature of the runs change set csID
+// touches as invalidated by it, and returns a signed run to the state it held
+// before signing (SPEC-008-R10). The change set must already be committed in
+// tx, and its items not yet applied. The runs are found first: once their
+// signatures are invalidated, no run is touched any more. Each run is locked
+// in id order, after the chain lock that audit.Append took.
+func invalidateTouched(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string) error {
+	rows, err := tx.Query(ctx, `
+		SELECT r.id FROM change_sets c, change_set_touched_runs(c.tenant_id, c.items) AS r(id)
+		WHERE c.id = $1 ORDER BY r.id`, csID)
+	if err != nil {
+		return err
+	}
+	runIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, runID := range runIDs {
+		var from domain.RunState
+		if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1 FOR UPDATE`, runID).Scan(&from); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `
+			UPDATE signatures SET invalidated_at = now(), invalidated_by_change_set = $2
+			WHERE entity_type = 'run' AND entity_id = $1 AND invalidated_at IS NULL
+			RETURNING id`, runID, csID)
+		if err != nil {
+			return err
+		}
+		sigIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		slices.Sort(sigIDs)
+		for _, sigID := range sigIDs {
+			if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
+				Actor: p.Actor, Action: "signature.invalidated", EntityType: "signature", EntityID: sigID, Reason: reason,
+				Payload: map[string]any{"run_id": runID, "change_set_id": csID},
+			}); err != nil {
+				return err
+			}
+		}
+		var to domain.RunState
+		if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1`, runID).Scan(&to); err != nil {
+			return err
+		}
+		if to != from {
+			if err := appendRunEvent(ctx, tx, p, runID, from, to, reason); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// signoffItem is a run waiting for the caller's signature.
+type signoffItem struct {
+	RunID           string    `json:"run_id"`
+	Label           string    `json:"label"`
+	ExperimentID    string    `json:"experiment_id"`
+	ExperimentTitle string    `json:"experiment_title"`
+	State           string    `json:"state"`
+	Step            int       `json:"step"`
+	Meaning         string    `json:"meaning"`
+	FinishedAt      time.Time `json:"finished_at"`
+}
+
+// listSignoffs pages through the finished runs whose next policy step is one
+// the caller's role covers and which the caller hasn't validly signed, oldest
+// first. The cursor is the id of the last run on the previous page.
+//
+//	GET /v1/inbox/signatures?cursor=<uuid>&limit=<1..200>
+func (s *Server) listSignoffs(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	cursor, limit, err := readPage(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	items := []signoffItem{}
+	err = s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT r.id, n.label, r.experiment_id, e.title, r.state, nx.step, nx.meaning, r.finished_at
+			FROM runs r
+			JOIN lineage_nodes n ON n.id = r.node_id
+			JOIN experiments e ON e.id = r.experiment_id
+			CROSS JOIN LATERAL (
+				SELECT (el->>'step')::int AS step, el->>'meaning' AS meaning, el->>'role' AS role
+				FROM jsonb_array_elements(r.signing_policy) el
+				WHERE NOT EXISTS (SELECT 1 FROM signatures s
+				                  WHERE s.entity_type = 'run' AND s.entity_id = r.id AND s.invalidated_at IS NULL
+				                    AND s.step = (el->>'step')::int)
+				ORDER BY (el->>'step')::int LIMIT 1
+			) nx
+			WHERE r.state IN ('completed', 'failed')
+			  AND lde_has_role(nx.role)
+			  AND NOT EXISTS (SELECT 1 FROM signatures s
+			                  WHERE s.entity_type = 'run' AND s.entity_id = r.id AND s.invalidated_at IS NULL
+			                    AND s.signer_id = lde_current_principal())
+			  AND ($1::text = '' OR (r.finished_at, r.id) > (SELECT finished_at, id FROM runs WHERE id = NULLIF($1::text, '')::uuid))
+			ORDER BY r.finished_at, r.id
+			LIMIT $2`, cursor, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var it signoffItem
+			if err := rows.Scan(&it.RunID, &it.Label, &it.ExperimentID, &it.ExperimentTitle, &it.State, &it.Step, &it.Meaning, &it.FinishedAt); err != nil {
+				return err
+			}
+			items = append(items, it)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var last string
+	if n := len(items); n > 0 {
+		last = items[n-1].RunID
+	}
+	writeJSON(w, http.StatusOK, page{Items: items, NextCursor: nextCursor(len(items), limit, last)})
+}
+
 // listSignatures returns a run's signatures, oldest first.
 //
 //	GET /v1/runs/{id}/signatures
@@ -429,7 +552,7 @@ func (s *Server) listSignatures(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, notFound("run"))
 		return
 	}
-	var items []signature
+	var items []domain.Signature
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
 		var one int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM runs WHERE id = $1`, id).Scan(&one); err != nil {

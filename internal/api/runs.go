@@ -13,12 +13,13 @@ import (
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/domain"
 )
 
-const runColumns = `id, tenant_id::text, experiment_id, protocol_version_id, node_id, state, params, started_at, finished_at, created_by, created_at`
+const runColumns = `id, tenant_id::text, experiment_id, protocol_version_id, node_id, state, params, signing_policy, started_at, finished_at, created_by, created_at`
 
+// scanRun reads a run with no signatures; the caller loads them.
 func scanRun(row pgx.Row) (domain.Run, error) {
-	var run domain.Run
+	run := domain.Run{Signatures: []domain.Signature{}}
 	err := row.Scan(&run.ID, &run.TenantID, &run.ExperimentID, &run.ProtocolVersionID, &run.NodeID, &run.State, &run.Params,
-		&run.StartedAt, &run.FinishedAt, &run.CreatedBy, &run.CreatedAt)
+		&run.SigningPolicy, &run.StartedAt, &run.FinishedAt, &run.CreatedBy, &run.CreatedAt)
 	return run, err
 }
 
@@ -86,6 +87,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		// A new run has none, but go through the one loader like the other responses.
+		if run.Signatures, err = loadSignatures(ctx, tx, run.ID); err != nil {
+			return err
+		}
 		if err := insertEdge(ctx, tx, p, domain.Edge{From: pv.NodeID, To: nodeID, Relation: domain.RelUsed}); err != nil {
 			return err
 		}
@@ -140,6 +145,9 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
 		detail.Run, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id = $1`, id))
 		if err != nil {
+			return err
+		}
+		if detail.Signatures, err = loadSignatures(ctx, tx, id); err != nil {
 			return err
 		}
 		err = tx.QueryRow(ctx, `
@@ -213,10 +221,12 @@ func (s *Server) listExperimentRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type summary struct {
-		ID        string    `json:"id"`
-		Label     string    `json:"label"`
-		State     string    `json:"state"`
-		CreatedAt time.Time `json:"created_at"`
+		ID            string             `json:"id"`
+		Label         string             `json:"label"`
+		State         string             `json:"state"`
+		CreatedAt     time.Time          `json:"created_at"`
+		SigningPolicy json.RawMessage    `json:"signing_policy"`
+		Signatures    []domain.Signature `json:"signatures"`
 	}
 	items := []summary{}
 	err = s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
@@ -228,7 +238,7 @@ func (s *Server) listExperimentRuns(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT r.id, n.label, r.state, r.created_at FROM runs r
+			SELECT r.id, n.label, r.state, r.created_at, r.signing_policy FROM runs r
 			JOIN lineage_nodes n ON n.id = r.node_id
 			WHERE r.experiment_id = $1
 			  AND ($2::text = '' OR (r.created_at, r.id) > (SELECT created_at, id FROM runs WHERE id = NULLIF($2::text, '')::uuid))
@@ -238,14 +248,28 @@ func (s *Server) listExperimentRuns(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		defer rows.Close()
+		ids := []string{}
 		for rows.Next() {
 			var run summary
-			if err := rows.Scan(&run.ID, &run.Label, &run.State, &run.CreatedAt); err != nil {
+			if err := rows.Scan(&run.ID, &run.Label, &run.State, &run.CreatedAt, &run.SigningPolicy); err != nil {
 				return err
 			}
 			items = append(items, run)
+			ids = append(ids, run.ID)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		// One query for the whole page.
+		sigs, err := loadSignaturesFor(ctx, tx, ids)
+		if err != nil {
+			return err
+		}
+		for i := range items {
+			items[i].Signatures = sigs[items[i].ID]
+		}
+		return nil
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -258,11 +282,10 @@ func (s *Server) listExperimentRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, page{Items: items, NextCursor: nextCursor(len(items), limit, last)})
 }
 
-// transitionRun advances the run state machine. Transitioning to "signed" is
-// an electronic signature: reason carries its meaning (§11.50(a)(3)).
+// transitionRun advances the run state machine. It never signs: a run becomes
+// signed only through POST /v1/runs/{id}/signatures (SPEC-008-R14).
 //
-// TODO(part11): §11.200 requires signing to re-authenticate the signer
-// (e.g. an OIDC step-up with max_age=0). Wire that in with real auth.
+//	POST /v1/runs/{id}/transitions  {"to": "...", "reason": "..."}
 func (s *Server) transitionRun(w http.ResponseWriter, r *http.Request) {
 	ctx, p := r.Context(), principal(r.Context())
 	id := r.PathValue("id")
@@ -282,9 +305,17 @@ func (s *Server) transitionRun(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, badRequest("unknown state %q", req.To))
 		return
 	}
+	if req.To == domain.RunSigned {
+		s.fail(w, r, badRequest("a run is signed through POST /v1/runs/{id}/signatures, not a transition"))
+		return
+	}
 
 	var run domain.Run
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		// The chain lock comes before the run lock, as signing and edits take them.
+		if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+			return err
+		}
 		var err error
 		run, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id = $1 FOR UPDATE`, id))
 		if err != nil {
@@ -298,7 +329,11 @@ func (s *Server) transitionRun(w http.ResponseWriter, r *http.Request) {
 			run.ID, run.State, run.StartedAt, run.FinishedAt); err != nil {
 			return err
 		}
-		return appendRunEvent(ctx, tx, p, run.ID, from, run.State, req.Reason)
+		if err := appendRunEvent(ctx, tx, p, run.ID, from, run.State, req.Reason); err != nil {
+			return err
+		}
+		run.Signatures, err = loadSignatures(ctx, tx, run.ID)
+		return err
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -308,12 +343,8 @@ func (s *Server) transitionRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func appendRunEvent(ctx context.Context, tx pgx.Tx, p Principal, runID string, from, to domain.RunState, reason string) error {
-	action := "run.transitioned"
-	if to == domain.RunSigned {
-		action = "run.signed"
-	}
 	_, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
-		Actor: p.Actor, Action: action, EntityType: "run", EntityID: runID, Reason: reason,
+		Actor: p.Actor, Action: "run.transitioned", EntityType: "run", EntityID: runID, Reason: reason,
 		Payload: map[string]any{"from": from, "to": to},
 	})
 	return err

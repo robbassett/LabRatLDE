@@ -20,6 +20,7 @@ type experiment struct {
 	ProtocolSHA256    string          `json:"protocol_sha256"`
 	ProtocolMD        string          `json:"protocol_md"`
 	ProtocolMeta      json.RawMessage `json:"protocol_meta"`
+	SigningPolicy     json.RawMessage `json:"signing_policy"`
 	CreatedBy         string          `json:"created_by"`
 	CreatedAt         time.Time       `json:"created_at"`
 }
@@ -51,9 +52,9 @@ func (s *Server) createExperiment(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO experiments (tenant_id, slug, title, created_by)
 			VALUES ($1, $2, $3, $4)
-			RETURNING id, created_at`,
+			RETURNING id, created_at, signing_policy`,
 			p.Tenant, exp.Slug, exp.Title, p.Actor,
-		).Scan(&exp.ID, &exp.CreatedAt); err != nil {
+		).Scan(&exp.ID, &exp.CreatedAt, &exp.SigningPolicy); err != nil {
 			return err
 		}
 		if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
@@ -135,7 +136,7 @@ func (s *Server) getExperiment(w http.ResponseWriter, r *http.Request) {
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT e.id, e.slug, e.title, v.id, v.version, encode(v.sha256, 'hex'), v.protocol_md, v.protocol_meta,
-			       e.created_by, e.created_at
+			       e.signing_policy, e.created_by, e.created_at
 			FROM experiments e
 			JOIN LATERAL (
 				SELECT * FROM protocol_versions v
@@ -144,7 +145,7 @@ func (s *Server) getExperiment(w http.ResponseWriter, r *http.Request) {
 			) v ON true
 			WHERE e.id = $1`, id,
 		).Scan(&exp.ID, &exp.Slug, &exp.Title, &exp.ProtocolVersionID, &exp.ProtocolVersion, &exp.ProtocolSHA256,
-			&exp.ProtocolMD, &exp.ProtocolMeta, &exp.CreatedBy, &exp.CreatedAt)
+			&exp.ProtocolMD, &exp.ProtocolMeta, &exp.SigningPolicy, &exp.CreatedBy, &exp.CreatedAt)
 	})
 	if err != nil {
 		s.fail(w, r, err)

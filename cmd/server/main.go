@@ -31,6 +31,8 @@ func main() {
 			do = func() error { return runIQ(os.Args[2:]) }
 		case "bootstrap-admin":
 			do = func() error { return runBootstrapAdmin(os.Args[2:]) }
+		case "set-gxp":
+			do = func() error { return runSetGxP(os.Args[2:]) }
 		}
 	}
 	if err := do(); err != nil {

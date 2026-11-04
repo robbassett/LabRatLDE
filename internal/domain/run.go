@@ -13,6 +13,9 @@ import (
 //	planned ──► running ◄──► paused
 //	running ──► completed | failed ──► signed
 //	planned | running | paused ──► aborted
+//
+// Signing happens only through the signatures endpoint, and only a committed
+// correction returns a signed run to completed or failed (SPEC-008).
 type RunState string
 
 const (
@@ -40,8 +43,9 @@ func (s RunState) Valid() bool {
 	return ok || s == RunAborted || s == RunSigned
 }
 
-// Terminal reports whether no further transitions are possible. A signed run
-// is sealed: corrections happen through a new, linked run, never in place.
+// Terminal reports whether no further transitions are possible. Only a
+// committed correction reopens a signed run (SPEC-008-R10), and the database
+// does that, not a transition.
 func (s RunState) Terminal() bool { return len(runTransitions[s]) == 0 }
 
 // CanTransition validates a move from s to next.
@@ -63,10 +67,30 @@ type Run struct {
 	NodeID            string          `json:"node_id"`             // this run's vertex in the lineage graph
 	State             RunState        `json:"state"`
 	Params            json.RawMessage `json:"params"`
+	SigningPolicy     json.RawMessage `json:"signing_policy"` // copied from the experiment at creation
+	Signatures        []Signature     `json:"signatures"`     // never null; the API fills it
 	StartedAt         *time.Time      `json:"started_at,omitempty"`
 	FinishedAt        *time.Time      `json:"finished_at,omitempty"`
 	CreatedBy         string          `json:"created_by"`
 	CreatedAt         time.Time       `json:"created_at"`
+}
+
+// Signature is a signature's JSON (SPEC-008-R12). It is valid until a
+// committed correction invalidates it.
+type Signature struct {
+	ID                     string     `json:"id"`
+	Step                   int        `json:"step"`
+	Meaning                string     `json:"meaning"`
+	Signer                 string     `json:"signer"`
+	PrintedName            string     `json:"printed_name"`
+	SignedAt               time.Time  `json:"signed_at"`
+	ManifestSHA256         string     `json:"manifest_sha256"`
+	Comment                *string    `json:"comment"`
+	ReauthMethod           string     `json:"reauth_method"`
+	Valid                  bool       `json:"valid"`
+	InvalidatedAt          *time.Time `json:"invalidated_at"`
+	InvalidatedByChangeSet *string    `json:"invalidated_by_change_set"`
+	InvalidatedReason      *string    `json:"invalidated_reason"`
 }
 
 // Apply moves the run to next, stamping lifecycle timestamps. Aborting and

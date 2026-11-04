@@ -27,6 +27,7 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 		Actor      string  `json:"actor"`
 		OnBehalfOf *string `json:"on_behalf_of"`
 		Auth       string  `json:"auth"`
+		TenantGxP  bool    `json:"tenant_gxp"`
 	}
 	me.Actor, me.Auth = p.Actor, "oidc"
 	if s.cfg.Env == "dev" {
@@ -37,7 +38,10 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
 		me.principalWithRoles, err = loadPrincipal(r, tx, p.As.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT gxp FROM tenants WHERE id = $1`, p.Tenant).Scan(&me.TenantGxP)
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -137,6 +141,54 @@ func (s *Server) createPrincipal(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Roles = []identity.RoleGrant{}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// renamePrincipal corrects a principal's printed name. Signatures already
+// applied keep the name they were signed with (SPEC-008-R17). The handler
+// rejects a blank name and reason; the database rejects a blank name as well,
+// and anyone but an admin.
+//
+//	PATCH /v1/principals/{id} {display_name, reason}
+func (s *Server) renamePrincipal(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("principal"))
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+		Reason      string `json:"reason"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	switch {
+	case strings.TrimSpace(req.DisplayName) == "":
+		s.fail(w, r, badRequest("display_name must not be blank"))
+		return
+	case strings.TrimSpace(req.Reason) == "":
+		s.fail(w, r, badRequest("reason is required"))
+		return
+	}
+	var out principalWithRoles
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		if _, err := identity.SetDisplayName(ctx, tx, p.Actor, p.Tenant, id, req.DisplayName, req.Reason); err != nil {
+			return err
+		}
+		var err error
+		out, err = loadPrincipal(r, tx, id)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = notFound("principal")
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // disablePrincipal stops a principal from authenticating. Its handle stays

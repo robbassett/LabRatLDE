@@ -165,6 +165,47 @@ func (s *Server) patchExperiment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// patchSigningPolicy replaces an experiment's signing policy as a direct
+// change set. The database lets only the roles the tenant's GxP setting names
+// do so (SPEC-008-R15). Runs already created keep their copy.
+//
+//	PATCH /v1/experiments/{id}/signing-policy   {"signing_policy": [{"step": 1, "meaning": "author", "role": "scientist"}], "reason": "..."}
+func (s *Server) patchSigningPolicy(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("experiment"))
+		return
+	}
+	var req struct {
+		SigningPolicy json.RawMessage `json:"signing_policy"`
+		Reason        string          `json:"reason"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		s.fail(w, r, badRequest("reason is required"))
+		return
+	}
+	it := changeItem{Op: "set_signing_policy", ExperimentID: id, SigningPolicy: req.SigningPolicy}
+	if err := it.validate(); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var res editResult
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
+		res, err = directEdit(ctx, tx, p, "experiment", id, req.Reason, it)
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // patchNote replaces a note's body as a direct change set. The note's rev
 // rises by one.
 //

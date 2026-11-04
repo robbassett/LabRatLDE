@@ -27,13 +27,14 @@ type changeItem struct {
 	Kind         domain.NodeKind `json:"kind,omitempty"`
 	Label        *string         `json:"label,omitempty"`
 	// Attrs has no omitempty: an empty object clears attrs, and must survive a round trip.
-	Attrs    map[string]any  `json:"attrs"`
-	Params   json.RawMessage `json:"params,omitempty"`
-	Title    string          `json:"title,omitempty"`
-	Body     string          `json:"body,omitempty"`
-	From     string          `json:"from,omitempty"`
-	To       string          `json:"to,omitempty"`
-	Relation domain.Relation `json:"relation,omitempty"`
+	Attrs         map[string]any  `json:"attrs"`
+	Params        json.RawMessage `json:"params,omitempty"`
+	SigningPolicy json.RawMessage `json:"signing_policy,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	Body          string          `json:"body,omitempty"`
+	From          string          `json:"from,omitempty"`
+	To            string          `json:"to,omitempty"`
+	Relation      domain.Relation `json:"relation,omitempty"`
 }
 
 // validate checks an item's fields for its op, so nothing malformed reaches
@@ -64,6 +65,15 @@ func (it changeItem) validate() error {
 		}
 		if strings.TrimSpace(it.Title) == "" {
 			return badRequest("title must not be blank")
+		}
+	case "set_signing_policy":
+		if !validUUID(it.ExperimentID) {
+			return badRequest("set_signing_policy needs an experiment_id uuid")
+		}
+		// The database's check says whether the steps, meanings and roles are valid.
+		var steps []json.RawMessage
+		if err := json.Unmarshal(it.SigningPolicy, &steps); err != nil || len(steps) == 0 {
+			return badRequest("signing_policy must be a non-empty array of steps")
 		}
 	case "add_node":
 		if !it.Kind.Valid() {
@@ -148,6 +158,9 @@ func applyItem(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string,
 	case "set_experiment_title":
 		return updateRecord(ctx, tx, p, csID, reason, "experiment", it.ExperimentID,
 			`UPDATE experiments SET title = $2 WHERE id = $1`, it.ExperimentID, it.Title)
+	case "set_signing_policy":
+		return updateRecord(ctx, tx, p, csID, reason, "experiment", it.ExperimentID,
+			`UPDATE experiments SET signing_policy = $2 WHERE id = $1`, it.ExperimentID, it.SigningPolicy)
 	case "edit_note":
 		return updateRecord(ctx, tx, p, csID, reason, "note", it.NoteID,
 			`UPDATE notes SET body = $2 WHERE id = $1`, it.NoteID, it.Body)
@@ -280,7 +293,7 @@ func (it changeItem) target() (entityType, id string) {
 		return "lineage_node", it.NodeID
 	case "update_run_params":
 		return "run", it.RunID
-	case "set_experiment_title":
+	case "set_experiment_title", "set_signing_policy":
 		return "experiment", it.ExperimentID
 	case "edit_note":
 		return "note", it.NoteID
@@ -416,6 +429,14 @@ func (s *Server) listChangeSets(w http.ResponseWriter, r *http.Request) {
 type changeSetDetail struct {
 	changeSet
 	Current []json.RawMessage `json:"current"`
+	// Invalidates lists the runs whose valid signatures a commit would
+	// invalidate, with how many. It is empty unless the change set is proposed.
+	Invalidates []invalidation `json:"invalidates"`
+}
+
+type invalidation struct {
+	RunID      string `json:"run_id"`
+	Signatures int    `json:"signatures"`
 }
 
 // getChangeSet returns one change set with its items' current values.
@@ -445,7 +466,28 @@ func (s *Server) getChangeSet(w http.ResponseWriter, r *http.Request) {
 			}
 			out.Current = append(out.Current, cur)
 		}
-		return nil
+		out.Invalidates = []invalidation{}
+		if cs.State != "proposed" {
+			return nil
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT r.id, (SELECT count(*) FROM signatures s
+			              WHERE s.entity_type = 'run' AND s.entity_id = r.id AND s.invalidated_at IS NULL)
+			FROM change_sets c, change_set_touched_runs(c.tenant_id, c.items) AS r(id)
+			WHERE c.id = $1
+			ORDER BY r.id`, id)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var inv invalidation
+			if err := rows.Scan(&inv.RunID, &inv.Signatures); err != nil {
+				return err
+			}
+			out.Invalidates = append(out.Invalidates, inv)
+		}
+		return rows.Err()
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -508,9 +550,12 @@ func (s *Server) replaceChangeSet(w http.ResponseWriter, r *http.Request) {
 // decideChangeSet commits, rejects or withdraws a proposed change set. The
 // database checks who may do it (SPEC-007-R06, R12). A commit applies the
 // items in the same transaction, so a failure leaves the change set proposed
-// and the record untouched (SPEC-007-R04).
+// and the record untouched (SPEC-007-R04). A commit that touches a run with
+// valid signatures must carry the items_sha256 the reviewer read, and
+// invalidates those signatures (SPEC-008-R10, R20).
 //
-//	POST /v1/change-sets/{id}/commit|reject|withdraw  {"reason"}
+//	POST /v1/change-sets/{id}/commit  {"reason", "items_sha256"}
+//	POST /v1/change-sets/{id}/reject|withdraw  {"reason"}
 func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, p := r.Context(), principal(r.Context())
@@ -520,7 +565,8 @@ func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Reason string `json:"reason"`
+			Reason      string `json:"reason"`
+			ItemsSHA256 string `json:"items_sha256"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			s.fail(w, r, err)
@@ -540,6 +586,23 @@ func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 			}
 			if cur.State != "proposed" {
 				return &httpError{http.StatusConflict, "change set is " + cur.State}
+			}
+			if state == "committed" {
+				// The chain lock stops a signature landing after this check: signing
+				// takes it too, and whether a hash is needed depends on the signatures.
+				if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+					return err
+				}
+				// The hash the reviewer read must be the items stored now.
+				var needsHash bool
+				if err := tx.QueryRow(ctx, `
+					SELECT EXISTS (SELECT 1 FROM change_set_touched_runs(c.tenant_id, c.items))
+					FROM change_sets c WHERE c.id = $1`, id).Scan(&needsHash); err != nil {
+					return err
+				}
+				if (needsHash || req.ItemsSHA256 != "") && req.ItemsSHA256 != cur.ItemsSHA256 {
+					return &httpError{http.StatusConflict, "items_sha256 must be the hash of the items you reviewed: read the change set again"}
+				}
 			}
 			row := tx.QueryRow(ctx, `
 				UPDATE change_sets AS c SET state = $2, decision_reason = $3
@@ -561,6 +624,10 @@ func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 			// The change set's own reason, not the decision's, is what its
 			// revisions record. The UPDATE above and applyItems share tx, so
 			// the revision trigger sees this change set as committed here.
+			// Signatures go first: applying the items would fail on a sealed run.
+			if err := invalidateTouched(ctx, tx, p, cs.ID, cur.Reason); err != nil {
+				return err
+			}
 			return applyItems(ctx, tx, p, cs.ID, cur.Reason, cur.Items)
 		})
 		if err != nil {

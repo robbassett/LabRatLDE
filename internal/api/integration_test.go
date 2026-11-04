@@ -653,7 +653,7 @@ func TestCommitIsAtomic(t *testing.T) {
 	}
 }
 
-// SPEC-007-R10
+// SPEC-007-R10, SPEC-008-R10
 func TestSealedCommitConflicts(t *testing.T) {
 	db := openTestDB(t)
 	tenant := newTenant(t, db)
@@ -1080,4 +1080,410 @@ func TestSigningBindsToShownManifest(t *testing.T) {
 	if len(forBob.Changes) != 1 || forBob.Changes[0].Path != "$.inputs[0].rev" || forBob.Changes[0].Kind != "changed" {
 		t.Errorf("changes = %+v, want one change of $.inputs[0].rev", forBob.Changes)
 	}
+}
+
+// finishedRun creates an experiment and a run with the given params, and moves
+// it to to ("completed" or "failed"). It returns the run and its node.
+func finishedRun(t *testing.T, srv *httptest.Server, token, to string, params any) (runID, nodeID string) {
+	t.Helper()
+	var exp struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, token, nil, http.StatusCreated, "POST", "/v1/experiments", map[string]string{"slug": "e", "title": "E", "protocol_md": "# A\n"}, &exp)
+	var run struct {
+		ID     string `json:"id"`
+		NodeID string `json:"node_id"`
+	}
+	sendWant(t, srv, token, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ID, "params": params}, &run)
+	for _, state := range []string{"running", to} {
+		sendWant(t, srv, token, nil, http.StatusOK, "POST", "/v1/runs/"+run.ID+"/transitions", map[string]string{"to": state}, nil)
+	}
+	return run.ID, run.NodeID
+}
+
+// signedView is the part of a signature the correction tests check.
+type signedView struct {
+	ID                     string  `json:"id"`
+	Step                   int     `json:"step"`
+	ManifestSHA256         string  `json:"manifest_sha256"`
+	Valid                  bool    `json:"valid"`
+	InvalidatedByChangeSet *string `json:"invalidated_by_change_set"`
+	InvalidatedReason      *string `json:"invalidated_reason"`
+}
+
+func listSignatures(t *testing.T, srv *httptest.Server, token, runID string) []signedView {
+	t.Helper()
+	var out struct {
+		Items []signedView `json:"items"`
+	}
+	sendWant(t, srv, token, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/signatures", nil, &out)
+	return out.Items
+}
+
+func runState(t *testing.T, srv *httptest.Server, token, runID string) string {
+	t.Helper()
+	var run struct {
+		State string `json:"state"`
+	}
+	sendWant(t, srv, token, nil, http.StatusOK, "GET", "/v1/runs/"+runID, nil, &run)
+	return run.State
+}
+
+// proposeChangeSet proposes items as the caller holding token. It returns the
+// change set id and the items_sha256 a reviewer reads.
+func proposeChangeSet(t *testing.T, srv *httptest.Server, token, reason string, items any) (id, hash string) {
+	t.Helper()
+	var cs struct {
+		ID          string `json:"id"`
+		ItemsSHA256 string `json:"items_sha256"`
+	}
+	sendWant(t, srv, token, nil, http.StatusCreated, "POST", "/v1/change-sets", map[string]any{"title": "correction", "reason": reason, "items": items}, &cs)
+	return cs.ID, cs.ItemsSHA256
+}
+
+func paramsItems(runID string, temp int) []map[string]any {
+	return []map[string]any{{"op": "update_run_params", "run_id": runID, "params": map[string]any{"anneal_temp_c": temp}}}
+}
+
+// commitChangeSet commits as the caller holding token, sending hash when it is not empty.
+func commitChangeSet(t *testing.T, srv *httptest.Server, token, id, hash string) (int, []byte) {
+	t.Helper()
+	body := map[string]string{"reason": "reviewed"}
+	if hash != "" {
+		body["items_sha256"] = hash
+	}
+	return send(t, srv, token, nil, "POST", "/v1/change-sets/"+id+"/commit", body)
+}
+
+// eventCount counts a tenant's audit events of one action about one entity
+// (the empty entity matches all), as the owner.
+func eventCount(t *testing.T, db *storage.DB, tenant, action, entityID string) int {
+	t.Helper()
+	var n int
+	err := db.Pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM audit_events WHERE tenant_id = $1 AND action = $2 AND ($3 = '' OR entity_id = $3)`,
+		tenant, action, entityID).Scan(&n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// signBoth has alice sign step 1 and bob step 2.
+func signBoth(t *testing.T, srv *httptest.Server, key *rsa.PrivateKey, f fixture, runID string) {
+	t.Helper()
+	if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+		t.Fatalf("step 1: %d %s", status, body)
+	}
+	if status, body := signAs(t, srv, key, f.bob, runID, 2, "review"); status != http.StatusCreated {
+		t.Fatalf("step 2: %d %s", status, body)
+	}
+}
+
+// SPEC-008-R10
+func TestCorrectionInvalidatesSignatures(t *testing.T) {
+	db := openTestDB(t)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+
+	t.Run("signed run returns to completed", func(t *testing.T) {
+		f := newFixture(t, db)
+		alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+		runID, _ := finishedRun(t, srv, alice, "completed", map[string]any{"anneal_temp_c": 60})
+		signBoth(t, srv, key, f, runID)
+		if got := runState(t, srv, alice, runID); got != "signed" {
+			t.Fatalf("state %q before the correction, want signed", got)
+		}
+		first := listSignatures(t, srv, alice, runID)
+
+		csID, hash := proposeChangeSet(t, srv, alice, "transcription error", paramsItems(runID, 62))
+		if status, body := commitChangeSet(t, srv, alice, csID, hash); status != http.StatusConflict {
+			t.Errorf("alice commits her own correction: %d %s, want 409", status, body)
+		}
+		if status, body := send(t, srv, alice, nil, "PATCH", "/v1/runs/"+runID+"/params",
+			map[string]any{"params": map[string]any{"anneal_temp_c": 62}, "reason": "direct"}); status != http.StatusConflict {
+			t.Errorf("alice edits the params directly: %d %s, want 409", status, body)
+		}
+
+		if status, body := commitChangeSet(t, srv, bob, csID, hash); status != http.StatusOK {
+			t.Fatalf("bob commits: %d %s, want 200", status, body)
+		}
+		sigs := listSignatures(t, srv, alice, runID)
+		if len(sigs) != 2 {
+			t.Fatalf("%d signatures, want 2", len(sigs))
+		}
+		for _, s := range sigs {
+			if s.Valid || s.InvalidatedByChangeSet == nil || *s.InvalidatedByChangeSet != csID ||
+				s.InvalidatedReason == nil || *s.InvalidatedReason != "transcription error" {
+				t.Errorf("signature %+v, want invalidated by %s with reason transcription error", s, csID)
+			}
+		}
+		if n := eventCount(t, db, f.tenant, "signature.invalidated", ""); n != 2 {
+			t.Errorf("%d signature.invalidated events, want 2", n)
+		}
+		var from int
+		err := db.Pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM audit_events
+			WHERE action = 'run.transitioned' AND entity_id = $1 AND payload::jsonb->>'from' = 'signed' AND payload::jsonb->>'to' = 'completed'`,
+			runID).Scan(&from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if from != 1 {
+			t.Errorf("%d run.transitioned events from signed, want 1", from)
+		}
+		if got := runState(t, srv, alice, runID); got != "completed" {
+			t.Errorf("state %q after the correction, want completed", got)
+		}
+
+		var revs struct {
+			Items []struct {
+				Value struct {
+					Params struct {
+						Temp int `json:"anneal_temp_c"`
+					} `json:"params"`
+				} `json:"value"`
+			} `json:"items"`
+		}
+		sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/records/run/"+runID+"/revisions", nil, &revs)
+		if len(revs.Items) != 2 || revs.Items[0].Value.Params.Temp != 60 || revs.Items[1].Value.Params.Temp != 62 {
+			t.Errorf("revisions %+v, want 60 then 62", revs.Items)
+		}
+
+		if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+			t.Fatalf("alice signs step 1 again: %d %s", status, body)
+		}
+		var again signedView
+		for _, s := range listSignatures(t, srv, alice, runID) {
+			if s.Valid {
+				again = s
+			}
+		}
+		if again.Step != 1 || again.ManifestSHA256 == first[0].ManifestSHA256 {
+			t.Errorf("new signature %+v, want step 1 on a new manifest (was %s)", again, first[0].ManifestSHA256)
+		}
+	})
+
+	t.Run("failed run returns to failed", func(t *testing.T) {
+		f := newFixture(t, db)
+		alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+		runID, _ := finishedRun(t, srv, alice, "failed", map[string]any{"anneal_temp_c": 60})
+		signBoth(t, srv, key, f, runID)
+		csID, hash := proposeChangeSet(t, srv, alice, "transcription error", paramsItems(runID, 62))
+		if status, body := commitChangeSet(t, srv, bob, csID, hash); status != http.StatusOK {
+			t.Fatalf("bob commits: %d %s", status, body)
+		}
+		if got := runState(t, srv, alice, runID); got != "failed" {
+			t.Errorf("state %q after the correction, want failed", got)
+		}
+	})
+
+	t.Run("partly signed run stays completed", func(t *testing.T) {
+		f := newFixture(t, db)
+		alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+		runID, _ := finishedRun(t, srv, alice, "completed", map[string]any{"anneal_temp_c": 60})
+		if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+			t.Fatalf("step 1: %d %s", status, body)
+		}
+		csID, hash := proposeChangeSet(t, srv, alice, "transcription error", paramsItems(runID, 62))
+		if status, body := commitChangeSet(t, srv, bob, csID, hash); status != http.StatusOK {
+			t.Fatalf("bob commits: %d %s", status, body)
+		}
+		sigs := listSignatures(t, srv, alice, runID)
+		if len(sigs) != 1 || sigs[0].Valid {
+			t.Errorf("signatures %+v, want one invalidated", sigs)
+		}
+		if got := runState(t, srv, alice, runID); got != "completed" {
+			t.Errorf("state %q, want completed", got)
+		}
+		if n := eventCount(t, db, f.tenant, "run.transitioned", runID); n != 2 {
+			t.Errorf("%d run.transitioned events, want 2 (running, completed) and none for the correction", n)
+		}
+	})
+
+	t.Run("a note edit counts and an annotation edit does not", func(t *testing.T) {
+		f := newFixture(t, db)
+		alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+		runID, nodeID := finishedRun(t, srv, alice, "completed", map[string]any{"anneal_temp_c": 60})
+		var before, after struct {
+			ID         string `json:"id"`
+			Annotation bool   `json:"annotation"`
+		}
+		sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/lineage/nodes/"+nodeID+"/notes", map[string]string{"body": "pipetted by hand"}, &before)
+		if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+			t.Fatalf("step 1: %d %s", status, body)
+		}
+		sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/lineage/nodes/"+nodeID+"/notes", map[string]string{"body": "late remark"}, &after)
+		if before.Annotation || !after.Annotation {
+			t.Fatalf("annotation flags: note before signing %v, after %v, want false and true", before.Annotation, after.Annotation)
+		}
+
+		sendWant(t, srv, alice, nil, http.StatusOK, "PATCH", "/v1/notes/"+after.ID, map[string]string{"body": "late remark, amended", "reason": "typo"}, nil)
+		if sigs := listSignatures(t, srv, alice, runID); len(sigs) != 1 || !sigs[0].Valid {
+			t.Fatalf("signatures %+v after an annotation edit, want one valid", sigs)
+		}
+
+		csID, hash := proposeChangeSet(t, srv, alice, "wrong volume", []map[string]any{{"op": "edit_note", "note_id": before.ID, "body": "pipetted by machine"}})
+		if status, body := commitChangeSet(t, srv, bob, csID, hash); status != http.StatusOK {
+			t.Fatalf("bob commits the note edit: %d %s", status, body)
+		}
+		if sigs := listSignatures(t, srv, alice, runID); len(sigs) != 1 || sigs[0].Valid {
+			t.Errorf("signatures %+v after a note edit, want one invalidated", sigs)
+		}
+	})
+}
+
+// SPEC-008-R20
+func TestCommitBindsToReviewedItems(t *testing.T) {
+	db := openTestDB(t)
+	f := newFixture(t, db)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+	alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+	runID, _ := finishedRun(t, srv, alice, "completed", map[string]any{"anneal_temp_c": 60})
+	signBoth(t, srv, key, f, runID)
+
+	csID, read := proposeChangeSet(t, srv, alice, "transcription error", paramsItems(runID, 62))
+	var replaced struct {
+		ItemsSHA256 string `json:"items_sha256"`
+	}
+	sendWant(t, srv, alice, nil, http.StatusOK, "PUT", "/v1/change-sets/"+csID, map[string]any{
+		"title": "correction", "reason": "transcription error", "items": paramsItems(runID, 99),
+	}, &replaced)
+	if replaced.ItemsSHA256 == read {
+		t.Fatal("replacing the items did not change items_sha256")
+	}
+
+	unchanged := func(what string) {
+		t.Helper()
+		var cs struct {
+			State string `json:"state"`
+		}
+		sendWant(t, srv, bob, nil, http.StatusOK, "GET", "/v1/change-sets/"+csID, nil, &cs)
+		if cs.State != "proposed" {
+			t.Errorf("%s: change set is %s, want proposed", what, cs.State)
+		}
+		if sigs := listSignatures(t, srv, bob, runID); len(sigs) != 2 || !sigs[0].Valid || !sigs[1].Valid {
+			t.Errorf("%s: signatures %+v, want two valid", what, sigs)
+		}
+		if got := runState(t, srv, bob, runID); got != "signed" {
+			t.Errorf("%s: state %q, want signed", what, got)
+		}
+	}
+	before := auditCount(t, db, f.tenant)
+	if status, body := commitChangeSet(t, srv, bob, csID, read); status != http.StatusConflict {
+		t.Errorf("commit with the hash read before the replacement: %d %s, want 409", status, body)
+	}
+	unchanged("stale hash")
+	if status, body := commitChangeSet(t, srv, bob, csID, ""); status != http.StatusConflict {
+		t.Errorf("commit with no hash: %d %s, want 409", status, body)
+	}
+	unchanged("no hash")
+	if after := auditCount(t, db, f.tenant); after != before {
+		t.Errorf("audit chain grew from %d to %d events on the 409s", before, after)
+	}
+
+	if status, body := commitChangeSet(t, srv, bob, csID, replaced.ItemsSHA256); status != http.StatusOK {
+		t.Errorf("commit with the new hash: %d %s, want 200", status, body)
+	}
+}
+
+// runShown is a run as the create, read, list and transition endpoints return it.
+type runShown struct {
+	ID            string          `json:"id"`
+	State         string          `json:"state"`
+	SigningPolicy json.RawMessage `json:"signing_policy"`
+	Signatures    json.RawMessage `json:"signatures"`
+}
+
+// SPEC-008-R12
+func TestRunsShowSignatures(t *testing.T) {
+	db := openTestDB(t)
+	f := newFixture(t, db)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+	alice, bob := mintToken(t, key, claims(f.tenant, "alice")), mintToken(t, key, claims(f.tenant, "bob"))
+
+	var exp struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/experiments", map[string]string{"slug": "e", "title": "E", "protocol_md": "# A\n"}, &exp)
+	var signed, other runShown
+	sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ID, "params": map[string]any{"anneal_temp_c": 60}}, &signed)
+	if string(signed.Signatures) != "[]" {
+		t.Errorf("POST /v1/runs: signatures %s, want []", signed.Signatures)
+	}
+	var policy []struct {
+		Step    int    `json:"step"`
+		Meaning string `json:"meaning"`
+		Role    string `json:"role"`
+	}
+	if err := json.Unmarshal(signed.SigningPolicy, &policy); err != nil || len(policy) != 2 || policy[0].Meaning != "author" || policy[1].Role != "reviewer" {
+		t.Errorf("POST /v1/runs: signing_policy %s (%v), want the default two-step policy", signed.SigningPolicy, err)
+	}
+	for _, to := range []string{"running", "completed"} {
+		sendWant(t, srv, alice, nil, http.StatusOK, "POST", "/v1/runs/"+signed.ID+"/transitions", map[string]string{"to": to}, nil)
+	}
+	sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ID}, &other)
+	var moved runShown
+	sendWant(t, srv, alice, nil, http.StatusOK, "POST", "/v1/runs/"+other.ID+"/transitions", map[string]string{"to": "running"}, &moved)
+	if string(moved.Signatures) != "[]" || len(moved.SigningPolicy) == 0 {
+		t.Errorf("transition response: signatures %s, signing_policy %s, want [] and a policy", moved.Signatures, moved.SigningPolicy)
+	}
+	if status, body := signAs(t, srv, key, f.alice, signed.ID, 1, "author"); status != http.StatusCreated {
+		t.Fatalf("alice signs: %d %s", status, body)
+	}
+
+	type shownSignature struct {
+		PrintedName       string  `json:"printed_name"`
+		Meaning           string  `json:"meaning"`
+		SignedAt          string  `json:"signed_at"`
+		Valid             bool    `json:"valid"`
+		InvalidatedReason *string `json:"invalidated_reason"`
+	}
+	check := func(where string, raw json.RawMessage, wantValid bool) {
+		t.Helper()
+		var sigs []shownSignature
+		if err := json.Unmarshal(raw, &sigs); err != nil || len(sigs) != 1 {
+			t.Errorf("%s: signatures %s (%v), want one", where, raw, err)
+			return
+		}
+		s := sigs[0]
+		if _, err := time.Parse(time.RFC3339, s.SignedAt); err != nil {
+			t.Errorf("%s: signed_at %q is not RFC 3339", where, s.SignedAt)
+		}
+		if s.PrintedName != "Alice Ng" || s.Meaning != "author" || s.Valid != wantValid || (s.InvalidatedReason != nil) == wantValid {
+			t.Errorf("%s: signature %+v, want Alice Ng, author, valid %v", where, s, wantValid)
+		}
+		if !wantValid && (s.InvalidatedReason == nil || *s.InvalidatedReason != "transcription error") {
+			t.Errorf("%s: invalidated_reason %v, want transcription error", where, s.InvalidatedReason)
+		}
+	}
+	checkAll := func(wantValid bool) {
+		t.Helper()
+		var got runShown
+		sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+signed.ID, nil, &got)
+		check("GET /v1/runs/{id}", got.Signatures, wantValid)
+		var list struct {
+			Items []runShown `json:"items"`
+		}
+		sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/experiments/"+exp.ID+"/runs", nil, &list)
+		if len(list.Items) != 2 {
+			t.Fatalf("list has %d runs, want 2", len(list.Items))
+		}
+		for _, r := range list.Items {
+			if r.ID == signed.ID {
+				check("GET /v1/experiments/{id}/runs", r.Signatures, wantValid)
+			} else if string(r.Signatures) != "[]" || len(r.SigningPolicy) == 0 {
+				t.Errorf("list, unsigned run: signatures %s, signing_policy %s, want [] and a policy", r.Signatures, r.SigningPolicy)
+			}
+		}
+	}
+	checkAll(true)
+
+	csID, hash := proposeChangeSet(t, srv, alice, "transcription error", paramsItems(signed.ID, 62))
+	if status, body := commitChangeSet(t, srv, bob, csID, hash); status != http.StatusOK {
+		t.Fatalf("bob commits: %d %s", status, body)
+	}
+	checkAll(false)
 }

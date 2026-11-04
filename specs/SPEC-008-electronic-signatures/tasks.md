@@ -200,7 +200,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - The signature's JSON is one `signature` struct and `loadSignatures(ctx, tx, runID)` with the join for `invalidated_reason`.
   - Verify: `make test-integration TEST_DB=…` passes, including 4.4–4.6.
   - Integrity: yes
-- [ ] 4.8 Test: a correction invalidates signatures (SPEC-008-R10)
+- [x] 4.8 Test: a correction invalidates signatures (SPEC-008-R10)
   - Requirements: SPEC-008-R10
   - Files: `internal/api/integration_test.go`
   - Do: `TestCorrectionInvalidatesSignatures`, as the R09/R10 example, on `prodServer`.
@@ -212,12 +212,12 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - A note edit on a sealed node counts; an annotation edit doesn't, and leaves signatures valid.
     - Comment `// SPEC-008-R10`.
   - Verify: fails only on the new tests.
-- [ ] 4.8a Test: a commit binds to the items reviewed (SPEC-008-R20)
+- [x] 4.8a Test: a commit binds to the items reviewed (SPEC-008-R20)
   - Requirements: SPEC-008-R20
   - Files: `internal/api/integration_test.go`
   - Do: `TestCommitBindsToReviewedItems`, as the R20 example, on `prodServer`. After each 409, the change set is still proposed and the signatures are valid. Comment `// SPEC-008-R20`. Added by the integrity review of Phase 3.
   - Verify: fails only on the new tests.
-- [ ] 4.9 Corrections in commit
+- [x] 4.9 Corrections in commit
   - Requirements: SPEC-008-R10
   - Files: `internal/api/changesets.go`, `internal/api/signatures.go`
   - Do:
@@ -226,27 +226,27 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - `getChangeSet` gains `invalidates: [{run_id, signatures}]` for a proposed change set.
   - Verify: `make test-integration TEST_DB=…` passes, including 4.8.
   - Integrity: yes
-- [ ] 4.10 Transitions refuse `signed`
+- [x] 4.10 Transitions refuse `signed`
   - Requirements: SPEC-008-R14
   - Files: `internal/api/runs.go`, `internal/domain/run.go`
   - Do: `transitionRun` calls `audit.LockChain` before its `FOR UPDATE`, for the lock order in design §2. In `transitionRun`, `to: signed` is `badRequest` naming `POST /v1/runs/{id}/signatures`. Remove the `TODO(part11)`, and the signing branch of `appendRunEvent`. Move `run.signed` to `signatures.go`. Update the comments on `RunState` and `Terminal`: only a committed correction reopens a signed run.
   - Verify: `curl` with `to: signed` is 400. `make test-integration TEST_DB=…` passes.
-- [ ] 4.11 Test: runs show their signatures (SPEC-008-R12)
+- [x] 4.11 Test: runs show their signatures (SPEC-008-R12)
   - Requirements: SPEC-008-R12
   - Files: `internal/api/integration_test.go`
   - Do: `TestRunsShowSignatures`: after alice's signature, `GET /v1/runs/{id}`, `GET /v1/experiments/{id}/runs` and a transition response on another run (empty) each have `signatures`, with printed name, meaning, RFC 3339 `signed_at` and `valid`. `POST /v1/runs` returns `signatures: []` and `signing_policy`. After a correction, `valid` is false with the reason. Comment `// SPEC-008-R12`.
   - Verify: fails only on the new test.
-- [ ] 4.12 Signatures on every run representation
+- [x] 4.12 Signatures on every run representation
   - Requirements: SPEC-008-R12
   - Files: `internal/api/runs.go`, `internal/domain/run.go`
   - Do: `domain.Run` gains `SigningPolicy json.RawMessage` (`signing_policy`) and `Signatures []Signature` (`signatures`, never null); move the `signature` struct to `domain`. Add the column to `runColumns`. Create, read and transition load signatures through `loadSignatures`. The list query fetches them for the page in one extra query keyed by run id.
   - Verify: `make test-integration TEST_DB=…` passes, including 4.11.
-- [ ] 4.13 Sign-off inbox endpoint
+- [x] 4.13 Sign-off inbox endpoint
   - Requirements: SPEC-008-R05 (support)
   - Files: `internal/api/signatures.go`, `internal/api/server.go`
   - Do: `GET /v1/inbox/signatures`, as design §2, with `readPage` and one SQL query: the next step via `jsonb_array_elements(r.signing_policy)` with no valid signature, `lde_has_role(role)`, and no valid signature by the caller. Ordered by `finished_at, id`.
   - Verify: `curl` as dev users: a completed run lists for one user, and after they sign step 1 it no longer lists for them. Dev users hold every role, so it lists for the next user.
-- [ ] 4.14 Signing policy and rename endpoints, and `tenant_gxp`
+- [x] 4.14 Signing policy and rename endpoints, and `tenant_gxp`
   - Requirements: SPEC-008-R15, SPEC-008-R17
   - Files: `internal/api/changesets.go`, `internal/api/edits.go`, `internal/api/experiments.go`, `internal/api/principals.go`, `internal/api/server.go`, `internal/identity/identity.go`
   - Do:
@@ -255,7 +255,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - `identity.SetDisplayName(ctx, tx, actor, tenantID, id, name, reason)`, appending `principal.renamed` with `{handle, from, to}`.
     - `PATCH /v1/principals/{id}`, requiring a name and reason (400 if blank). `tenant_gxp` on `/v1/me`.
   - Verify: `curl`: as a dev user, a policy change is 200 and shows in revisions. Under `LDE_ENV=prod` the role denial is covered by 3.2. A rename appears in the audit trail.
-- [ ] 4.15 `labrat set-gxp`
+- [x] 4.15 `labrat set-gxp`
   - Requirements: SPEC-008-R15
   - Files: `cmd/server/setgxp.go` (new), `cmd/server/main.go`
   - Do: as design §2 "GxP setting", in the style of `bootstrap-admin`. All four flags are required, and a blank reason is an error. It updates `tenants` and appends `tenant.gxp_changed` with `{from, to}` through `WithOwner`. It prints the new value.
