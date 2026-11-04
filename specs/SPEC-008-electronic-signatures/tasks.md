@@ -295,7 +295,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 - [x] 5.7 Proposing a correction
   - Requirements: SPEC-008-R09, SPEC-008-R10 (UI side)
   - Files: `web/src/EditField.tsx`, `web/src/RunView.tsx`, `web/src/LineageView.tsx`, `web/src/Notes.tsx`
-  - Do: `EditField` gains an optional `proposeOnly` prop. The save button reads "Propose correction", the form says it needs a reviewer, and the result links to the review inbox. A run with any signature passes it, and its `onSave` calls `POST /v1/change-sets`. Aborted runs and runs that are `signed` with no signature rows pass `readOnly` instead. The lineage view (a node whose edit returns 409 is proposed instead) and frozen notes get the same treatment, using the run's `signatures` where the view has them.
+  - Do: `EditField` gains an optional `proposeOnly` prop. The save button reads "Propose correction", the form says it needs a reviewer, and the result links to the review inbox. A run with a valid signature passes it, and its `onSave` calls `POST /v1/change-sets`. Aborted runs and runs that are `signed` with no signature rows pass `readOnly` instead. The lineage view (a node whose edit returns 409 is proposed instead) and frozen notes get the same treatment, using the run's `signatures` where the view has them.
   - Verify: on a signed run in dev, propose a params change. It appears in the review inbox, and the run is unchanged.
 - [x] 5.8 Review inbox warning
   - Requirements: SPEC-008-R09, SPEC-008-R10 (UI side)

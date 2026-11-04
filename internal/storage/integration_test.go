@@ -1556,27 +1556,29 @@ func TestSignerNeedsPrintedName(t *testing.T) {
 	eve := newPrincipal(t, db, f.tenant, "eve", "human", "scientist")
 	_, err := trySign(db, f.tenant, eve, f.runID, 1, "author")
 	wantCode(t, "blank display name signs", err, "LDE07")
-	// Whitespace of any kind is blank: tab is a name btrim would keep.
-	var tab storage.Principal
-	err = db.WithOwner(context.Background(), func(tx pgx.Tx) error {
-		ctx := context.Background()
-		if err := tx.QueryRow(ctx, `INSERT INTO principals (tenant_id, kind, handle, display_name, issuer, subject)
-			VALUES ($1, 'human', 'tab', E'\t', 'https://idp.test', 'tab') RETURNING id`, f.tenant).Scan(&tab.ID); err != nil {
+	// A name with nothing to print is blank, whatever the whitespace.
+	for handle, name := range map[string]string{"tab": "\t", "nbsp": " ", "zwsp": "​", "ideographic": "　"} {
+		var blank storage.Principal
+		err = db.WithOwner(context.Background(), func(tx pgx.Tx) error {
+			ctx := context.Background()
+			if err := tx.QueryRow(ctx, `INSERT INTO principals (tenant_id, kind, handle, display_name, issuer, subject)
+				VALUES ($1, 'human', $2, $3, 'https://idp.test', $2) RETURNING id`, f.tenant, handle, name).Scan(&blank.ID); err != nil {
+				return err
+			}
+			if _, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
+				Actor: "system:test", Action: "principal.created", EntityType: "principal", EntityID: blank.ID,
+			}); err != nil {
+				return err
+			}
+			_, err := grantRole(ctx, tx, f.tenant, "system:test", blank.ID, blank.ID, "scientist", "fixture", true)
 			return err
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if _, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
-			Actor: "system:test", Action: "principal.created", EntityType: "principal", EntityID: tab.ID,
-		}); err != nil {
-			return err
-		}
-		_, err := grantRole(ctx, tx, f.tenant, "system:test", tab.ID, tab.ID, "scientist", "fixture", true)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
+		_, err = trySign(db, f.tenant, blank, f.runID, 1, "author")
+		wantCode(t, handle+" display name signs", err, "LDE07")
 	}
-	_, err = trySign(db, f.tenant, tab, f.runID, 1, "author")
-	wantCode(t, "tab-only display name signs", err, "LDE07")
 	renamePrincipal(t, db, f.tenant, eve.ID, "Eve Okafor")
 	id, err := trySign(db, f.tenant, eve, f.runID, 1, "author")
 	wantCode(t, "named signer signs", err, "")

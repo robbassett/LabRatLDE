@@ -146,7 +146,7 @@ Corrections need signatures to invalidate. Two kinds of run have none, so they c
 - **Aborted runs.** Aborting is final and seals the run.
 - **Runs signed before SPEC-008.** They are in state `signed` but have no signature records. They stay sealed as they were signed.
 
-A correction to either is refused with `409` when committed, and the UI shows their fields as read-only. For a run that needs fixing after it is frozen, record a new, linked run and refer to the old one.
+A correction to either is refused with `409` when committed. The run view shows their fields as read-only; the lineage view says the record is frozen when you try to save. For a run that needs fixing after it is frozen, record a new, linked run and refer to the old one.
 
 ## In the UI
 

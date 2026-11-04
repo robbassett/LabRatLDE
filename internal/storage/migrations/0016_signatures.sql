@@ -28,7 +28,7 @@ CREATE TABLE signatures (
     step                      int NOT NULL,
     meaning                   text NOT NULL CHECK (meaning IN ('author', 'review', 'approval', 'verification')),
     signer_id                 uuid NOT NULL,
-    printed_name              text NOT NULL CHECK (printed_name ~ '[^[:space:]]'),
+    printed_name              text NOT NULL CHECK (lde_has_text(printed_name)),
     signed_at                 timestamptz NOT NULL,
     manifest_id               uuid NOT NULL,
     manifest_sha256           bytea NOT NULL,
@@ -178,7 +178,7 @@ BEGIN
         RAISE EXCEPTION 'only an enabled human can sign' USING ERRCODE = 'LDE07';
     END IF;
     NEW.printed_name := pr.display_name;
-    IF NEW.printed_name !~ '[^[:space:]]' THEN
+    IF NOT public.lde_has_text(NEW.printed_name) THEN
         RAISE EXCEPTION 'signer % has no printed name', pr.handle USING ERRCODE = 'LDE07';
     END IF;
 

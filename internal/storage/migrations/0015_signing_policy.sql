@@ -6,6 +6,15 @@
 -- can change that copy. Principals may now be renamed, because a signature
 -- prints the signer's name, but a name is never blank.
 
+-- SPEC-008-R16: whether a printed name has anything to print. [:space:] alone
+-- misses the Unicode blanks a paste can bring in, such as a non-breaking space.
+CREATE FUNCTION lde_has_text(t text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT t ~ '[^[:space:]\u00A0\u1680\u180E\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\uFEFF]'
+$$;
+
+GRANT EXECUTE ON FUNCTION lde_has_text(text) TO lde_app;
+
 -- SPEC-008-R15: lde_app holds only SELECT on tenants, so only the owner can
 -- change this. The change and its audit event commit together.
 ALTER TABLE tenants ADD COLUMN gxp boolean NOT NULL DEFAULT true;
@@ -139,7 +148,7 @@ BEGIN
        (OLD.id, OLD.tenant_id, OLD.kind, OLD.handle, OLD.email, OLD.issuer, OLD.subject, OLD.created_at) THEN
         RAISE EXCEPTION 'principal %: only enabled and display_name may change', OLD.handle USING ERRCODE = 'LDE03';
     END IF;
-    IF NEW.display_name IS DISTINCT FROM OLD.display_name AND NEW.display_name !~ '[^[:space:]]' THEN
+    IF NEW.display_name IS DISTINCT FROM OLD.display_name AND NOT public.lde_has_text(NEW.display_name) THEN
         RAISE EXCEPTION 'principal %: display_name cannot be blank', OLD.handle USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
