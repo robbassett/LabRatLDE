@@ -119,7 +119,7 @@ func (s *Server) createDevPrincipal(ctx context.Context, tenant, handle string) 
 	const actor, reason = "system:dev-auth", "dev sign-in"
 	err := s.db.WithOwner(ctx, func(tx pgx.Tx) error {
 		p, err := identity.Create(ctx, tx, actor, reason, identity.Principal{
-			TenantID: tenant, Kind: "human", Handle: handle, Issuer: "dev", Subject: handle,
+			TenantID: tenant, Kind: "human", Handle: handle, DisplayName: handle, Issuer: "dev", Subject: handle,
 		})
 		if err != nil {
 			return err

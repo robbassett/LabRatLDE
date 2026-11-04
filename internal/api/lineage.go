@@ -35,6 +35,10 @@ func insertNode(ctx context.Context, tx pgx.Tx, p Principal, kind domain.NodeKin
 // insertEdge links two nodes and audits it. The database trigger rejects
 // cycles with SQLSTATE LDE01, which the API surfaces as 409.
 func insertEdge(ctx context.Context, tx pgx.Tx, p Principal, e domain.Edge) error {
+	// The edge trigger locks the run. Take the chain lock first, as signing does.
+	if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+		return err
+	}
 	if !e.Relation.Valid() {
 		return badRequest("unknown relation %q", e.Relation)
 	}

@@ -89,7 +89,7 @@ func TestRunPinsProtocolVersion(t *testing.T) {
 	if err := db.EnsureTenant(ctx, tenant, "t-"+tenant[:8], "test"); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil).Handler())
+	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
 	defer srv.Close()
 
 	var exp struct {
@@ -205,12 +205,24 @@ func newKey(t *testing.T) *rsa.PrivateKey {
 // prodServer serves the API in prod, trusting tokens that key signed.
 func prodServer(t *testing.T, db *storage.DB, key *rsa.PrivateKey) *httptest.Server {
 	t.Helper()
-	cfg := config.Config{Env: "prod", OIDCIssuer: testIssuer, OIDCAudience: "labrat", OIDCTenantClaim: "lde_tenant"}
-	verifier := oidc.NewVerifier(testIssuer, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&key.PublicKey}},
-		&oidc.Config{ClientID: "labrat"})
-	srv := httptest.NewServer(api.New(cfg, db, slog.New(slog.NewTextHandler(io.Discard, nil)), verifier).Handler())
+	cfg := config.Config{Env: "prod", OIDCIssuer: testIssuer, OIDCAudience: "labrat", OIDCTenantClaim: "lde_tenant",
+		OIDCUIClientID: "labrat-ui", SignReauthMaxAge: 120 * time.Second}
+	keys := &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&key.PublicKey}}
+	verifier := oidc.NewVerifier(testIssuer, keys, &oidc.Config{ClientID: "labrat"})
+	reauth := oidc.NewVerifier(testIssuer, keys, &oidc.Config{ClientID: "labrat-ui"})
+	srv := httptest.NewServer(api.New(cfg, db, slog.New(slog.NewTextHandler(io.Discard, nil)), verifier, reauth).Handler())
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// reauthToken is an ID token for the UI client whose login happened age ago.
+func reauthToken(t *testing.T, key *rsa.PrivateKey, subject string, age time.Duration) string {
+	t.Helper()
+	now := time.Now()
+	return mintToken(t, key, map[string]any{
+		"iss": testIssuer, "aud": "labrat-ui", "sub": subject,
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "auth_time": now.Add(-age).Unix(),
+	})
 }
 
 // send makes a request with an optional bearer token and extra headers, and
@@ -258,18 +270,18 @@ func newFixture(t *testing.T, db *storage.DB) fixture {
 	f := fixture{tenant: newTenant(t, db)}
 	err := db.WithOwner(ctx, func(tx pgx.Tx) error {
 		for _, p := range []struct {
-			out          *identity.Principal
-			handle, kind string
-			roles        []string
+			out                *identity.Principal
+			handle, name, kind string
+			roles              []string
 		}{
-			{&f.alice, "alice", "human", []string{"scientist"}},
-			{&f.bob, "bob", "human", []string{"reviewer"}},
-			{&f.carol, "carol", "human", []string{"admin"}},
-			{&f.bot, "bot", "agent", []string{"scientist", "reviewer"}},
+			{&f.alice, "alice", "Alice Ng", "human", []string{"scientist"}},
+			{&f.bob, "bob", "Bob Ortiz", "human", []string{"reviewer"}},
+			{&f.carol, "carol", "Carol Diaz", "human", []string{"admin"}},
+			{&f.bot, "bot", "Bot", "agent", []string{"scientist", "reviewer"}},
 		} {
 			var err error
 			*p.out, err = identity.Create(ctx, tx, "system:test", "fixture", identity.Principal{
-				TenantID: f.tenant, Kind: p.kind, Handle: p.handle, Issuer: testIssuer, Subject: p.handle,
+				TenantID: f.tenant, Kind: p.kind, Handle: p.handle, DisplayName: p.name, Issuer: testIssuer, Subject: p.handle,
 			})
 			if err != nil {
 				return err
@@ -582,7 +594,7 @@ func TestCommitIsAtomic(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenant := newTenant(t, db)
-	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil).Handler())
+	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
 	defer srv.Close()
 	devHeaders := map[string]string{"X-LDE-Tenant": tenant, "X-LDE-Actor": "it@lab"}
 
@@ -645,7 +657,7 @@ func TestCommitIsAtomic(t *testing.T) {
 func TestSealedCommitConflicts(t *testing.T) {
 	db := openTestDB(t)
 	tenant := newTenant(t, db)
-	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil).Handler())
+	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
 	defer srv.Close()
 	devHeaders := map[string]string{"X-LDE-Tenant": tenant, "X-LDE-Actor": "it@lab"}
 
@@ -686,5 +698,386 @@ func TestSealedCommitConflicts(t *testing.T) {
 			},
 		}, &cs)
 		sendWant(t, srv, "", devHeaders, http.StatusConflict, "POST", "/v1/change-sets/"+cs.ID+"/commit", map[string]string{"reason": "ok"}, nil)
+	}
+}
+
+// manifestResponse is GET /v1/runs/{id}/manifest.
+type manifestResponse struct {
+	Manifest string `json:"manifest"`
+	SHA256   string `json:"sha256"`
+	Previous *struct {
+		Step   int    `json:"step"`
+		SHA256 string `json:"sha256"`
+	} `json:"previous"`
+	Changes []struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	} `json:"changes"`
+}
+
+// SPEC-008-R02
+func TestManifestIsCanonical(t *testing.T) {
+	db := openTestDB(t)
+	tenant := newTenant(t, db)
+	srv := httptest.NewServer(api.New(config.Config{Env: "dev", MaxIngestBytes: 1 << 20}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
+	defer srv.Close()
+	dev := map[string]string{"X-LDE-Tenant": tenant, "X-LDE-Actor": "it@lab"}
+
+	var exp struct {
+		ID                string `json:"id"`
+		ProtocolVersionID string `json:"protocol_version_id"`
+		ProtocolSHA256    string `json:"protocol_sha256"`
+	}
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/experiments", map[string]string{"slug": "e", "title": "E", "protocol_md": "# A\n"}, &exp)
+	sample := createNode(t, srv, "", dev, map[string]any{"kind": "sample", "label": "S1"})
+	var run struct {
+		ID     string `json:"id"`
+		NodeID string `json:"node_id"`
+	}
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/runs", map[string]any{
+		"experiment_id": exp.ID, "params": json.RawMessage(`{"b": 1.50, "a": 2}`), "inputs": []string{sample},
+	}, &run)
+	transition := func(to string) {
+		sendWant(t, srv, "", dev, http.StatusOK, "POST", "/v1/runs/"+run.ID+"/transitions", map[string]string{"to": to}, nil)
+	}
+	transition("running")
+	var inst struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/instruments", map[string]string{"name": "reader", "kind": "plate-reader"}, &inst)
+	req, err := http.NewRequest("POST", srv.URL+"/v1/instruments/"+inst.ID+"/stream?run_id="+run.ID, bytes.NewBufferString(
+		`{"ts":"2026-01-01T00:00:00Z","channel":"od600","value":0.5,"unit":"AU"}`+"\n"+
+			`{"ts":"2026-01-01T00:00:01Z","channel":"od600","value":0.6,"unit":"AU"}`+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range dev {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ds struct {
+		DatasetID string `json:"dataset_id"`
+		Count     int64  `json:"count"`
+		SHA256    string `json:"sha256"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ds); err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ingest: %d %v", resp.StatusCode, err)
+	}
+	resp.Body.Close()
+	noteBody := "pipetted by hand"
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/lineage/nodes/"+run.NodeID+"/notes", map[string]string{"body": noteBody}, nil)
+	transition("completed")
+
+	get := func() ([]byte, manifestResponse) {
+		t.Helper()
+		status, raw := send(t, srv, "", dev, "GET", "/v1/runs/"+run.ID+"/manifest", nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET manifest: %d %s", status, raw)
+		}
+		var m manifestResponse
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		return raw, m
+	}
+	raw1, m1 := get()
+	raw2, _ := get()
+	if !bytes.Equal(raw1, raw2) {
+		t.Errorf("two reads differ:\n%s\n%s", raw1, raw2)
+	}
+	if sum := sha256.Sum256([]byte(m1.Manifest)); m1.SHA256 != fmt.Sprintf("%x", sum) {
+		t.Errorf("sha256 %s is not the SHA-256 of the manifest text", m1.SHA256)
+	}
+	if m1.Previous != nil || len(m1.Changes) != 0 {
+		t.Errorf("unsigned run: previous %+v, changes %v, want none", m1.Previous, m1.Changes)
+	}
+
+	var m struct {
+		Format            string          `json:"format"`
+		RunID             string          `json:"run_id"`
+		ExperimentID      string          `json:"experiment_id"`
+		ProtocolVersionID string          `json:"protocol_version_id"`
+		ProtocolSHA256    string          `json:"protocol_sha256"`
+		State             string          `json:"state"`
+		Params            json.RawMessage `json:"params"`
+		RunRev            int             `json:"run_rev"`
+		NodeRev           int             `json:"node_rev"`
+		Inputs            []struct {
+			NodeID string `json:"node_id"`
+			Rev    int    `json:"rev"`
+		} `json:"inputs"`
+		Datasets []struct {
+			NodeID string `json:"node_id"`
+			Rev    int    `json:"rev"`
+			Count  int64  `json:"count"`
+			SHA256 string `json:"sha256"`
+		} `json:"datasets"`
+		Notes []struct {
+			NoteID     string `json:"note_id"`
+			NodeID     string `json:"node_id"`
+			Rev        int    `json:"rev"`
+			BodySHA256 string `json:"body_sha256"`
+		} `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(m1.Manifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	noteSum := sha256.Sum256([]byte(noteBody))
+	if m.Format != "labrat.run-manifest.v1" || m.RunID != run.ID || m.ExperimentID != exp.ID ||
+		m.ProtocolVersionID != exp.ProtocolVersionID || m.ProtocolSHA256 != exp.ProtocolSHA256 || m.State != "completed" || m.RunRev != 1 || m.NodeRev != 1 {
+		t.Errorf("manifest header = %+v", m)
+	}
+	if len(m.Inputs) != 1 || m.Inputs[0].NodeID != sample || m.Inputs[0].Rev != 1 {
+		t.Errorf("inputs = %+v, want [%s rev 1]", m.Inputs, sample)
+	}
+	if len(m.Datasets) != 1 || m.Datasets[0].NodeID != ds.DatasetID || m.Datasets[0].Rev != 1 || m.Datasets[0].Count != 2 || m.Datasets[0].SHA256 != ds.SHA256 {
+		t.Errorf("datasets = %+v, want %s with 2 readings and sha256 %s", m.Datasets, ds.DatasetID, ds.SHA256)
+	}
+	if len(m.Notes) != 1 || m.Notes[0].NodeID != run.NodeID || m.Notes[0].Rev != 1 || m.Notes[0].BodySHA256 != fmt.Sprintf("%x", noteSum) {
+		t.Errorf("notes = %+v, want one on the run node with rev 1", m.Notes)
+	}
+	if got := string(m.Params); got != `{"a":2,"b":1.50}` {
+		t.Errorf("params %s, want {\"a\":2,\"b\":1.50}: sorted keys, numbers verbatim", got)
+	}
+
+	// SPEC-007-R05: a proposal changes nothing.
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/change-sets", map[string]any{
+		"title": "relabel", "reason": "naming", "items": []map[string]any{{"op": "update_node", "node_id": sample, "label": "S1b"}},
+	}, nil)
+	if _, m := get(); m.Manifest != m1.Manifest {
+		t.Errorf("manifest changed after a proposed change set")
+	}
+
+	// An annotation on a sealed node is not part of the manifest.
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/runs/"+run.ID+"/signatures", map[string]any{
+		"step": 1, "meaning": "author", "manifest_sha256": m1.SHA256,
+	}, nil)
+	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/lineage/nodes/"+run.NodeID+"/notes", map[string]string{"body": "late remark"}, nil)
+	if _, m := get(); m.Manifest != m1.Manifest {
+		t.Errorf("manifest changed after an annotation")
+	}
+
+	// A committed edit of an input changes its rev.
+	sendWant(t, srv, "", dev, http.StatusOK, "PATCH", "/v1/lineage/nodes/"+sample, map[string]string{"label": "S1c", "reason": "typo"}, nil)
+	_, m3 := get()
+	if m3.Manifest == m1.Manifest || !bytes.Contains([]byte(m3.Manifest), []byte(`"node_id":"`+sample+`","rev":2`)) {
+		t.Errorf("manifest after sample edit = %s, want inputs[0].rev 2", m3.Manifest)
+	}
+}
+
+// signAs gets the run's manifest as who, then signs it with a login 30 s old.
+func signAs(t *testing.T, srv *httptest.Server, key *rsa.PrivateKey, who identity.Principal, runID string, step int, meaning string) (int, []byte) {
+	t.Helper()
+	access := mintToken(t, key, claims(who.TenantID, who.Handle))
+	var m manifestResponse
+	sendWant(t, srv, access, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &m)
+	return send(t, srv, access, nil, "POST", "/v1/runs/"+runID+"/signatures", map[string]any{
+		"step": step, "meaning": meaning, "manifest_sha256": m.SHA256,
+		"reauth_token": reauthToken(t, key, who.Handle, 30*time.Second),
+	})
+}
+
+// completedRun creates an experiment and a completed run of it as the caller
+// holding token, consuming inputs. It returns the run and its node.
+func completedRun(t *testing.T, srv *httptest.Server, token string, inputs ...string) (runID, nodeID string) {
+	t.Helper()
+	var exp struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, token, nil, http.StatusCreated, "POST", "/v1/experiments", map[string]string{"slug": "e", "title": "E", "protocol_md": "# A\n"}, &exp)
+	var run struct {
+		ID     string `json:"id"`
+		NodeID string `json:"node_id"`
+	}
+	sendWant(t, srv, token, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ID, "inputs": inputs}, &run)
+	for _, to := range []string{"running", "completed"} {
+		sendWant(t, srv, token, nil, http.StatusOK, "POST", "/v1/runs/"+run.ID+"/transitions", map[string]string{"to": to}, nil)
+	}
+	return run.ID, run.NodeID
+}
+
+// signatureCount counts a run's signature rows, as the owner.
+func signatureCount(t *testing.T, db *storage.DB, runID string) int {
+	t.Helper()
+	var n int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT count(*) FROM signatures WHERE entity_id = $1`, runID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// SPEC-008-R01
+func TestSignatureRecord(t *testing.T) {
+	db := openTestDB(t)
+	f := newFixture(t, db)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+	ctx := context.Background()
+	runID, _ := completedRun(t, srv, mintToken(t, key, claims(f.tenant, "alice")))
+
+	var m manifestResponse
+	sendWant(t, srv, mintToken(t, key, claims(f.tenant, "alice")), nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &m)
+	before := time.Now()
+	status, body := signAs(t, srv, key, f.alice, runID, 1, "author")
+	if status != http.StatusCreated {
+		t.Fatalf("alice signs step 1: %d %s", status, body)
+	}
+	after := time.Now()
+	var sig struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &sig); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		printed, meaning, hash, method string
+		step                           int
+		reauthAt                       time.Time
+	)
+	err := db.Pool.QueryRow(ctx, `
+		SELECT printed_name, meaning, step, encode(manifest_sha256, 'hex'), reauth_method, reauth_at
+		FROM signatures WHERE id = $1`, sig.ID).Scan(&printed, &meaning, &step, &hash, &method, &reauthAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if printed != "Alice Ng" || meaning != "author" || step != 1 || hash != m.SHA256 || method != "oidc" {
+		t.Errorf("signature = %q %q step %d hash %s method %s, want Alice Ng author 1 %s oidc", printed, meaning, step, hash, method, m.SHA256)
+	}
+	// The token's auth_time has whole seconds, 30 s before the request.
+	if reauthAt.Nanosecond() != 0 || reauthAt.Before(before.Add(-31*time.Second)) || reauthAt.After(after.Add(-30*time.Second)) {
+		t.Errorf("reauth_at %s, want the token's auth_time, 30 s before %s", reauthAt, before)
+	}
+
+	var reason, eventHash, actor string
+	err = db.Pool.QueryRow(ctx, `
+		SELECT reason, payload::jsonb->>'manifest_sha256', actor FROM audit_events
+		WHERE action = 'signature.applied' AND entity_id = $1`, sig.ID).Scan(&reason, &eventHash, &actor)
+	if err != nil {
+		t.Fatalf("signature.applied event: %v", err)
+	}
+	if reason != "author" || eventHash != m.SHA256 || actor != "alice" {
+		t.Errorf("signature.applied reason %q hash %s actor %q, want author %s alice", reason, eventHash, actor, m.SHA256)
+	}
+	var signed int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action = 'run.signed' AND entity_id = $1`, runID).Scan(&signed); err != nil {
+		t.Fatal(err)
+	}
+	if signed != 0 {
+		t.Errorf("%d run.signed events after step 1, want 0", signed)
+	}
+
+	if status, body := signAs(t, srv, key, f.bob, runID, 2, "review"); status != http.StatusCreated {
+		t.Fatalf("bob signs step 2: %d %s", status, body)
+	}
+	var state string
+	err = db.Pool.QueryRow(ctx, `
+		SELECT r.state, (SELECT count(*) FROM audit_events WHERE action = 'run.signed' AND entity_id = r.id::text)
+		FROM runs r WHERE r.id = $1`, runID).Scan(&state, &signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "signed" || signed != 1 {
+		t.Errorf("after step 2: state %s with %d run.signed events, want signed with 1", state, signed)
+	}
+}
+
+// SPEC-008-R04
+func TestSigningNeedsFreshReauth(t *testing.T) {
+	db := openTestDB(t)
+	f := newFixture(t, db)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+	alice := mintToken(t, key, claims(f.tenant, "alice"))
+	runID, _ := completedRun(t, srv, alice)
+	var m manifestResponse
+	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &m)
+
+	noAuthTime := map[string]any{"iss": testIssuer, "aud": "labrat-ui", "sub": "alice",
+		"iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix()}
+	wrongAudience := map[string]any{"iss": testIssuer, "aud": "labrat", "sub": "alice", "auth_time": time.Now().Add(-30 * time.Second).Unix(),
+		"iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix()}
+	cases := []struct{ name, token string }{
+		{"no token", ""},
+		{"10 minutes old", reauthToken(t, key, "alice", 10*time.Minute)},
+		{"no auth_time", mintToken(t, key, noAuthTime)},
+		{"bob's token", reauthToken(t, key, "bob", 30*time.Second)},
+		{"another audience", mintToken(t, key, wrongAudience)},
+		{"another key", reauthToken(t, newKey(t), "alice", 30*time.Second)},
+	}
+	for _, c := range cases {
+		before := auditCount(t, db, f.tenant)
+		status, body := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", map[string]any{
+			"step": 1, "meaning": "author", "manifest_sha256": m.SHA256, "reauth_token": c.token,
+		})
+		if status != http.StatusUnauthorized {
+			t.Errorf("%s: %d %s, want 401", c.name, status, body)
+		}
+		if n := signatureCount(t, db, runID); n != 0 {
+			t.Errorf("%s: %d signature rows, want 0", c.name, n)
+		}
+		if after := auditCount(t, db, f.tenant); after != before {
+			t.Errorf("%s: audit chain grew from %d to %d events", c.name, before, after)
+		}
+	}
+	if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+		t.Errorf("30-second token: %d %s, want 201", status, body)
+	}
+}
+
+// SPEC-008-R18
+func TestSigningBindsToShownManifest(t *testing.T) {
+	db := openTestDB(t)
+	f := newFixture(t, db)
+	key := newKey(t)
+	srv := prodServer(t, db, key)
+	alice := mintToken(t, key, claims(f.tenant, "alice"))
+	sample := createNode(t, srv, alice, nil, map[string]any{"kind": "sample", "label": "S1"})
+	runID, _ := completedRun(t, srv, alice, sample)
+	revise := func(label string) {
+		t.Helper()
+		sendWant(t, srv, alice, nil, http.StatusOK, "PATCH", "/v1/lineage/nodes/"+sample, map[string]string{"label": label, "reason": "typo"}, nil)
+	}
+	var shown manifestResponse
+	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &shown)
+	revise("S1b")
+
+	before := auditCount(t, db, f.tenant)
+	status, body := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", map[string]any{
+		"step": 1, "meaning": "author", "manifest_sha256": shown.SHA256,
+		"reauth_token": reauthToken(t, key, "alice", 30*time.Second),
+	})
+	if status != http.StatusConflict {
+		t.Fatalf("signing the earlier hash: %d %s, want 409", status, body)
+	}
+	if n := signatureCount(t, db, runID); n != 0 {
+		t.Errorf("%d signature rows after the 409, want 0", n)
+	}
+	var manifests int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT count(*) FROM signature_manifests WHERE run_id = $1`, runID).Scan(&manifests); err != nil {
+		t.Fatal(err)
+	}
+	if manifests != 0 {
+		t.Errorf("%d manifest rows after the 409, want 0", manifests)
+	}
+	if after := auditCount(t, db, f.tenant); after != before {
+		t.Errorf("audit chain grew from %d to %d events on the 409", before, after)
+	}
+	if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
+		t.Fatalf("signing the new hash: %d %s, want 201", status, body)
+	}
+
+	// SPEC-008-R19: bob sees what changed since alice signed.
+	revise("S1c")
+	var forBob manifestResponse
+	sendWant(t, srv, mintToken(t, key, claims(f.tenant, "bob")), nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &forBob)
+	if forBob.Previous == nil || forBob.Previous.Step != 1 {
+		t.Errorf("previous = %+v, want step 1", forBob.Previous)
+	}
+	if len(forBob.Changes) != 1 || forBob.Changes[0].Path != "$.inputs[0].rev" || forBob.Changes[0].Kind != "changed" {
+		t.Errorf("changes = %+v, want one change of $.inputs[0].rev", forBob.Changes)
 	}
 }

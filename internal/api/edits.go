@@ -26,6 +26,10 @@ type note struct {
 // insertNote adds a note to a lineage node and audits it. The database marks
 // a note on a sealed node as an annotation.
 func insertNote(ctx context.Context, tx pgx.Tx, p Principal, nodeID, body string) (note, error) {
+	// The notes trigger locks the run. Take the chain lock first, as signing does.
+	if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+		return note{}, err
+	}
 	n := note{Rev: 1}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO notes (tenant_id, node_id, body, created_by)

@@ -17,8 +17,8 @@ import (
 // audit_events insert trigger independently re-checks linkage and recomputes
 // the digest, so a buggy or malicious client cannot write a forged event.
 func Append(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) (Event, error) {
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('lde.audit:' || $1, 0))`, tenantID); err != nil {
-		return Event{}, fmt.Errorf("audit: lock chain: %w", err)
+	if err := LockChain(ctx, tx, tenantID); err != nil {
+		return Event{}, err
 	}
 
 	head := Head{Hash: Genesis}
@@ -56,6 +56,16 @@ func Append(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) (Event, er
 		return Event{}, fmt.Errorf("audit: insert event: %w", err)
 	}
 	return ev, nil
+}
+
+// LockChain takes the tenant's chain lock for the rest of tx. Append takes it
+// itself; call this first when a transaction must hold the chain lock before
+// any other lock, so every writer takes them in one order.
+func LockChain(ctx context.Context, tx pgx.Tx, tenantID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('lde.audit:' || $1, 0))`, tenantID); err != nil {
+		return fmt.Errorf("audit: lock chain: %w", err)
+	}
+	return nil
 }
 
 // Scan streams the tenant's events in chain order, starting after afterSeq.

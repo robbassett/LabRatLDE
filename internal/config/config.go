@@ -30,6 +30,9 @@ type Config struct {
 	OIDCUIClientID  string        // LDE_OIDC_UI_CLIENT_ID: the UI's public client
 	OIDCUIScopes    string        // LDE_OIDC_UI_SCOPES: space-separated
 	UIIdleTimeout   time.Duration // LDE_UI_IDLE_TIMEOUT
+
+	// SignReauthMaxAge is how old a signer's login may be (SPEC-008-R04).
+	SignReauthMaxAge time.Duration // LDE_SIGN_REAUTH_MAX_AGE
 }
 
 func Load() (Config, error) {
@@ -58,6 +61,9 @@ func Load() (Config, error) {
 	}
 	if c.UIIdleTimeout, err = time.ParseDuration(env("LDE_UI_IDLE_TIMEOUT", "15m")); err != nil || c.UIIdleTimeout < time.Minute {
 		return c, fmt.Errorf("config: LDE_UI_IDLE_TIMEOUT must be a duration of at least 1m, got %q", os.Getenv("LDE_UI_IDLE_TIMEOUT"))
+	}
+	if c.SignReauthMaxAge, err = time.ParseDuration(env("LDE_SIGN_REAUTH_MAX_AGE", "120s")); err != nil || c.SignReauthMaxAge <= 0 {
+		return c, fmt.Errorf("config: LDE_SIGN_REAUTH_MAX_AGE must be a positive duration, got %q", os.Getenv("LDE_SIGN_REAUTH_MAX_AGE"))
 	}
 	if c.Env != "dev" && c.Env != "prod" {
 		return c, fmt.Errorf("config: LDE_ENV must be dev or prod, got %q", c.Env)

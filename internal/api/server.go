@@ -37,10 +37,11 @@ type Server struct {
 	db       *storage.DB
 	log      *slog.Logger
 	verifier TokenVerifier // nil in dev
+	reauth   TokenVerifier // checks the UI client's ID token at signing; nil in dev or without a UI client
 }
 
-func New(cfg config.Config, db *storage.DB, log *slog.Logger, verifier TokenVerifier) *Server {
-	return &Server{cfg: cfg, db: db, log: log, verifier: verifier}
+func New(cfg config.Config, db *storage.DB, log *slog.Logger, verifier, reauth TokenVerifier) *Server {
+	return &Server{cfg: cfg, db: db, log: log, verifier: verifier, reauth: reauth}
 }
 
 // Handler returns the fully wired router.
@@ -75,6 +76,9 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/runs/{id}", s.getRun)
 	v1.HandleFunc("POST /v1/runs/{id}/transitions", s.transitionRun)
 	v1.HandleFunc("PATCH /v1/runs/{id}/params", s.patchRunParams)
+	v1.HandleFunc("GET /v1/runs/{id}/manifest", s.getManifest)
+	v1.HandleFunc("POST /v1/runs/{id}/signatures", s.signRun)
+	v1.HandleFunc("GET /v1/runs/{id}/signatures", s.listSignatures)
 
 	v1.HandleFunc("POST /v1/lineage/nodes", s.createNode)
 	v1.HandleFunc("PATCH /v1/lineage/nodes/{id}", s.patchNode)

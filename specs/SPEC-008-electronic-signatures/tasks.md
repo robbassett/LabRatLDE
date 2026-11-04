@@ -148,7 +148,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
 
 ## Phase 4: API
 
-- [ ] 4.1 Config and the re-auth verifier
+- [x] 4.1 Config and the re-auth verifier
   - Requirements: SPEC-008-R04 (plumbing)
   - Files: `internal/config/config.go`, `internal/api/server.go`, `cmd/server/main.go`, `internal/api/integration_test.go` (fixture and every `api.New` call)
   - Do:
@@ -156,7 +156,7 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - `api.New(cfg, db, log, verifier, reauth TokenVerifier)`. `main` builds `provider.Verifier(&oidc.Config{ClientID: cfg.OIDCUIClientID})` when the client ID is set.
     - Tests: `prodServer` sets `OIDCUIClientID: "labrat-ui"`, `SignReauthMaxAge: 120 * time.Second`, and a second `oidc.NewVerifier` for that client. Add `reauthToken(t, key, subject, age time.Duration) string` (`aud` `labrat-ui`, `auth_time` = now − age). `newFixture` gives alice "Alice Ng", bob "Bob Ortiz", carol "Carol Diaz" and bot "Bot".
   - Verify: `make test-integration TEST_DB=…` passes.
-- [ ] 4.2 Test: the manifest is canonical (SPEC-008-R02)
+- [x] 4.2 Test: the manifest is canonical (SPEC-008-R02)
   - Requirements: SPEC-008-R02
   - Files: `internal/api/integration_test.go`
   - Do: `TestManifestIsCanonical`, dev mode. A completed run with params `{"b": 1.50, "a": 2}`, a sample input, an ingested dataset and a note.
@@ -167,28 +167,28 @@ Storage tests run SQL directly, as the owner (`db.Pool`) or as `lde_app` (`db.Wi
     - A committed sample edit changes `inputs[0].rev`.
     - Comment `// SPEC-008-R02`.
   - Verify: fails only on the new test (404).
-- [ ] 4.3 `GET /v1/runs/{id}/manifest`
+- [x] 4.3 `GET /v1/runs/{id}/manifest`
   - Requirements: SPEC-008-R02, SPEC-008-R19
   - Files: `internal/api/signatures.go` (new), `internal/api/server.go`
   - Do: `buildManifest(ctx, tx, runID) (text []byte, sha string, err error)` with one struct per design §2, using the queries of `getRun` and `latestRev`, through `audit.Canonicalize`. The handler adds `previous` and `changes` (`domain.Diff` of the two manifests decoded to maps). Reads only.
   - Verify: `make test-integration TEST_DB=…` passes, including 4.2.
   - Integrity: yes
-- [ ] 4.4 Test: the signature record (SPEC-008-R01)
+- [x] 4.4 Test: the signature record (SPEC-008-R01)
   - Requirements: SPEC-008-R01
   - Files: `internal/api/integration_test.go`
   - Do: helper `signAs(t, srv, key, who identity.Principal, runID string, step int, meaning string) (status int, body []byte)`: mint the access token, GET the manifest, POST with `reauthToken(…, 30*time.Second)`. `TestSignatureRecord` follows the R01 example, on `prodServer`, reading the row as the owner: printed name, meaning, step, `manifest_sha256`, `reauth_method = oidc`, and `reauth_at` = the token's `auth_time`. The `signature.applied` event has `reason = "author"` and the hash in its payload. After bob's step 2, a `run.signed` event exists. Comment `// SPEC-008-R01`.
   - Verify: fails only on the new tests.
-- [ ] 4.5 Test: signing needs fresh re-authentication (SPEC-008-R04)
+- [x] 4.5 Test: signing needs fresh re-authentication (SPEC-008-R04)
   - Requirements: SPEC-008-R04
   - Files: `internal/api/integration_test.go`
   - Do: `TestSigningNeedsFreshReauth`, table-driven on alice signing step 1. Each of these is 401 with no signature row and an unchanged `auditCount`: no token, 10 minutes old, no `auth_time`, bob's token, `aud` of `labrat`, signed by another key. A 30-second token is 201. Comment `// SPEC-008-R04`.
   - Verify: fails only on the new tests.
-- [ ] 4.6 Test: signing binds to the manifest shown (SPEC-008-R18)
+- [x] 4.6 Test: signing binds to the manifest shown (SPEC-008-R18)
   - Requirements: SPEC-008-R18
   - Files: `internal/api/integration_test.go`
   - Do: `TestSigningBindsToShownManifest`, as the R18 example. Revise the input through `PATCH /v1/lineage/nodes/{id}` between GET and POST. 409 and no row. The new hash is 201. Then, for bob, `changes` lists the input's `rev` and `previous` is step 1 (SPEC-008-R19, checked here). Comment `// SPEC-008-R18`.
   - Verify: fails only on the new tests.
-- [ ] 4.7 Signature endpoints
+- [x] 4.7 Signature endpoints
   - Requirements: SPEC-008-R01, SPEC-008-R04, SPEC-008-R18
   - Files: `internal/api/signatures.go`, `internal/api/server.go`, `internal/identity/identity.go`, `internal/api/identity.go`
   - Do:
