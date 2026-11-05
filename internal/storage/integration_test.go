@@ -2343,3 +2343,124 @@ func TestSigningPolicyChangeRoles(t *testing.T) {
 		wantCode(t, "invalid policy: "+tc.name, try(rev, "rev", tc.policy), "23514")
 	}
 }
+
+// SPEC-008-R04
+func TestSignatureChallengeRules(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	f := newSignFixture(t, db, "completed")
+	sha := strings.Repeat("a", 64)
+	carol := newSigner(t, db, f.tenant, "carol", "Carol Wu", "human", "admin")
+
+	// challenge starts a signing attempt on run as p, with its audit event.
+	challenge := func(tenant string, p storage.Principal, run string) (string, error) {
+		var id string
+		err := db.WithTenant(ctx, tenant, p, func(tx pgx.Tx) error {
+			if err := tx.QueryRow(ctx, `INSERT INTO signature_challenges (tenant_id, run_id, manifest_sha256)
+				VALUES ($1, $2, $3) RETURNING id`, tenant, run, sha).Scan(&id); err != nil {
+				return err
+			}
+			_, err := audit.Append(ctx, tx, tenant, audit.Entry{
+				Actor: "x", Action: "signature.challenge_issued", EntityType: "signature_challenge", EntityID: id,
+			})
+			return err
+		})
+		return id, err
+	}
+	exec := func(p storage.Principal, stmt string, args ...any) error {
+		return db.WithTenant(ctx, f.tenant, p, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, stmt, args...)
+			return err
+		})
+	}
+
+	// Who may start one: a human who could sign this finished run.
+	id, err := challenge(f.tenant, f.alice, f.runID)
+	wantCode(t, "alice starts an attempt", err, "")
+	var principal string
+	if err := db.Pool.QueryRow(ctx, `SELECT principal_id FROM signature_challenges WHERE id = $1`, id).Scan(&principal); err != nil {
+		t.Fatal(err)
+	}
+	if principal != f.alice.ID {
+		t.Errorf("principal_id = %s, want alice %s", principal, f.alice.ID)
+	}
+	_, err = challenge(f.tenant, storage.Principal{ID: f.bot.ID, OnBehalfOf: f.dana.ID}, f.runID)
+	wantCode(t, "an agent starts an attempt", err, "LDE07")
+	_, err = challenge(f.tenant, carol, f.runID)
+	wantCode(t, "an admin with no policy role starts an attempt", err, "LDE07")
+	running := newSignFixture(t, db, "running")
+	_, err = challenge(running.tenant, running.alice, running.runID)
+	wantCode(t, "an attempt on a running run", err, "LDE07")
+
+	// What lde_app can't set or skip.
+	wantCode(t, "lde_app sets principal_id", exec(f.alice, `INSERT INTO signature_challenges (tenant_id, run_id, manifest_sha256, principal_id)
+		VALUES ($1, $2, $3, $4)`, f.tenant, f.runID, sha, f.dana.ID), "42501")
+	wantCode(t, "lde_app sets created_at", exec(f.alice, `INSERT INTO signature_challenges (tenant_id, run_id, manifest_sha256, created_at)
+		VALUES ($1, $2, $3, now())`, f.tenant, f.runID, sha), "42501")
+	wantCode(t, "no audit event", exec(f.alice, `INSERT INTO signature_challenges (tenant_id, run_id, manifest_sha256)
+		VALUES ($1, $2, $3)`, f.tenant, f.runID, sha), "LDE02")
+	wantCode(t, "lde_app changes the manifest", exec(f.alice, `UPDATE signature_challenges SET manifest_sha256 = 'x' WHERE id = $1`, id), "42501")
+	wantCode(t, "lde_app deletes", exec(f.alice, `DELETE FROM signature_challenges WHERE id = $1`, id), "42501")
+	wantCode(t, "lde_app truncates", exec(f.alice, `TRUNCATE signature_challenges`), "42501")
+
+	// Used once, by the principal it was issued to.
+	const use = `UPDATE signature_challenges SET used_at = now() WHERE id = $1`
+	wantCode(t, "bob uses alice's challenge", exec(f.bob, use, id), "LDE07")
+	wantCode(t, "alice uses it", exec(f.alice, use, id), "")
+	wantCode(t, "alice uses it again", exec(f.alice, use, id), "LDE03")
+	wantCode(t, "alice un-uses it", exec(f.alice, `UPDATE signature_challenges SET used_at = NULL WHERE id = $1`, id), "LDE03")
+
+	_, err = db.Pool.Exec(ctx, `DELETE FROM signature_challenges WHERE id = $1`, id)
+	wantCode(t, "owner deletes", err, "LDE03")
+	_, err = db.Pool.Exec(ctx, `TRUNCATE signature_challenges`)
+	wantCode(t, "owner truncates", err, "LDE03")
+
+	// Another tenant can't see it.
+	var seen int
+	err = db.WithTenant(ctx, running.tenant, running.alice, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM signature_challenges WHERE id = $1`, id).Scan(&seen)
+	})
+	wantCode(t, "another tenant reads", err, "")
+	if seen != 0 {
+		t.Errorf("another tenant sees %d challenges, want 0", seen)
+	}
+
+	// One login signs once, across runs.
+	var second string
+	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) (err error) {
+		exp := newExperiment(t, tx, f.tenant, "second")
+		pv, _ := newProtocolVersion(t, tx, f.tenant, exp, 1, "# p\n")
+		second, err = insertRun(tx, f.tenant, exp, pv)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE runs SET state = 'completed' WHERE id = $1`, second); err != nil {
+		t.Fatal(err)
+	}
+	login := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	sign := func(run string) error {
+		return db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
+			var manifest string
+			var sum []byte
+			if err := tx.QueryRow(ctx, `INSERT INTO signature_manifests (tenant_id, run_id, manifest)
+				VALUES ($1, $2, $3) RETURNING id, sha256`, f.tenant, run, fmt.Sprintf(`{"run_id":%q}`, run)).Scan(&manifest, &sum); err != nil {
+				return err
+			}
+			var sig string
+			if err := tx.QueryRow(ctx, `INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id,
+					printed_name, manifest_id, manifest_sha256, reauth_at, reauth_method)
+				VALUES ($1, 'run', $2, 1, 'author', $3, 'x', $4, $5, $6, 'oidc') RETURNING id`,
+				f.tenant, run, f.alice.ID, manifest, sum, login).Scan(&sig); err != nil {
+				return err
+			}
+			_, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
+				Actor: "alice", Action: "signature.applied", EntityType: "signature", EntityID: sig, Reason: "author",
+			})
+			return err
+		})
+	}
+	wantCode(t, "one login signs a run", sign(f.runID), "")
+	wantCode(t, "the same login signs another run", sign(second), "23505")
+}

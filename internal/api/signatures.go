@@ -327,6 +327,19 @@ func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, runID,
 	if at.Add(maxChallengeSkew).Before(issued) {
 		return time.Time{}, "", "", notRecent
 	}
+	// One login proves one signature. The unique index signatures_one_per_login
+	// holds this if two requests race; this check gives the same answer as the
+	// other refusals.
+	var spent bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM signatures
+		               WHERE signer_id = $1 AND reauth_at = $2 AND reauth_method = 'oidc')`, p.As.ID, at).Scan(&spent)
+	if err != nil {
+		return time.Time{}, "", "", err
+	}
+	if spent {
+		return time.Time{}, "", "", notRecent
+	}
 	return at, "oidc", tok.Nonce, nil
 }
 
@@ -356,6 +369,11 @@ func (s *Server) createSignChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	var nonce string
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		// The chain lock comes first: the insert's foreign key locks the run,
+		// and signing takes the chain lock before the run lock.
+		if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+			return err
+		}
 		var one int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM runs WHERE id = $1`, id).Scan(&one); err != nil {
 			return err

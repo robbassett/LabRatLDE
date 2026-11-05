@@ -386,7 +386,9 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (res.status === 401 && path !== '/v1/meta') onUnauthorized();
+  // A refused signature is a stale login for that signature, not an ended session: the dialog says so.
+  const refusedSignature = method === 'POST' && path.endsWith('/signatures');
+  if (res.status === 401 && path !== '/v1/meta' && !refusedSignature) onUnauthorized();
   if (!res.ok) {
     let msg: string | undefined;
     try {

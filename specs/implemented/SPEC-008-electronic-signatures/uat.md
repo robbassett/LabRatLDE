@@ -523,7 +523,7 @@ Stop the dev server and follow section 1.3 (prod server, `tokens`, bootstrap, pe
   3. Open a completed run, click Sign, tick the box, click Sign.
   4. Watch the browser: does the IdP show its login form (username or password, or MFA), even though the session is live? Capture the authorization request URL: it must have `prompt=login` and `max_age=0`.
   5. Complete the login. In the browser's Network tab, find the request to `/v1/runs/<id>/signatures` and copy `reauth_token` from its body. Decode its middle part locally (`cut -d. -f2 | base64 -d`); do not paste it into a public website.
-  6. Check the claims: `iss` is the configured issuer, `aud` is the UI client id, `sub` is the signer's, and `auth_time` is present and is the time of this login, within about a minute of now.
+  6. Check the claims: `iss` is the configured issuer, `aud` is the UI client id, `sub` is the signer's, `auth_time` is present and is the time of this login, within about a minute of now, and `nonce` is present and equals the `nonce` in the authorization request URL from step 4.
   7. Check the signature was recorded: `GET /v1/runs/<id>/signatures` has `reauth_method: "oidc"`.
   8. Negative: wait longer than `LDE_SIGN_REAUTH_MAX_AGE` (2 minutes) at the login form, then log in; the signature must be refused with `401`.
   9. Record, per IdP: tenant or org name, date, whether `prompt=login` forced the form, whether `auth_time` was present, and the difference between `auth_time` and the server clock.

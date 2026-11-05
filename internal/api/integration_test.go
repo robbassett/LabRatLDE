@@ -1028,6 +1028,20 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 	nonce := signChallenge(t, srv, alice, runID, m.SHA256)
 	bobs := signChallenge(t, srv, mintToken(t, key, claims(f.tenant, "bob")), runID, m.SHA256)
 	otherManifest := signChallenge(t, srv, alice, runID, strings.Repeat("0", 64))
+	// A second run in the same experiment. Its challenge names run 1's manifest,
+	// so only the run differs.
+	var exp struct {
+		ExperimentID string `json:"experiment_id"`
+	}
+	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+runID, nil, &exp)
+	var second struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ExperimentID}, &second)
+	for _, to := range []string{"running", "completed"} {
+		sendWant(t, srv, alice, nil, http.StatusOK, "POST", "/v1/runs/"+second.ID+"/transitions", map[string]string{"to": to}, nil)
+	}
+	otherRun := signChallenge(t, srv, alice, second.ID, m.SHA256)
 	// An expired challenge can only be made as the owner, who sets its time.
 	var expired string
 	err := db.WithOwner(context.Background(), func(tx pgx.Tx) error {
@@ -1063,6 +1077,7 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 		{"a nonce that isn't a uuid", reauthToken(t, key, "alice", "x' OR '1'='1", 0)},
 		{"bob's challenge", reauthToken(t, key, "alice", bobs, 0)},
 		{"a challenge for another manifest", reauthToken(t, key, "alice", otherManifest, 0)},
+		{"a challenge for another run", reauthToken(t, key, "alice", otherRun, 0)},
 		{"an expired challenge", reauthToken(t, key, "alice", expired, 0)},
 	}
 	for _, c := range cases {
@@ -1080,8 +1095,16 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 			t.Errorf("%s: audit chain grew from %d to %d events", c.name, before, after)
 		}
 	}
+	// loginAt mints a token for one login, identified by when it happened.
+	loginAt := func(at time.Time, nonce string) string {
+		return mintToken(t, key, map[string]any{
+			"iss": testIssuer, "aud": "labrat-ui", "sub": "alice", "nonce": nonce, "auth_time": at.Unix(),
+			"iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix(),
+		})
+	}
+	login := time.Now()
 	body := map[string]any{
-		"step": 1, "meaning": "author", "manifest_sha256": m.SHA256, "reauth_token": reauthToken(t, key, "alice", nonce, 0),
+		"step": 1, "meaning": "author", "manifest_sha256": m.SHA256, "reauth_token": loginAt(login, nonce),
 	}
 	if status, raw := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", body); status != http.StatusCreated {
 		t.Errorf("a login made for this attempt: %d %s, want 201", status, raw)
@@ -1089,6 +1112,20 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 	// One login proves one signature: the same token can't be used again.
 	if status, raw := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", body); status != http.StatusUnauthorized {
 		t.Errorf("the same token again: %d %s, want 401", status, raw)
+	}
+	// The same login through a new challenge, as a silent IdP flow would give: refused.
+	var m2 manifestResponse
+	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+second.ID+"/manifest", nil, &m2)
+	sign2 := func(token string) (int, []byte) {
+		return send(t, srv, alice, nil, "POST", "/v1/runs/"+second.ID+"/signatures", map[string]any{
+			"step": 1, "meaning": "author", "manifest_sha256": m2.SHA256, "reauth_token": token,
+		})
+	}
+	if status, raw := sign2(loginAt(login, signChallenge(t, srv, alice, second.ID, m2.SHA256))); status != http.StatusUnauthorized {
+		t.Errorf("the same login for a second run: %d %s, want 401", status, raw)
+	}
+	if status, raw := sign2(loginAt(login.Add(time.Second), signChallenge(t, srv, alice, second.ID, m2.SHA256))); status != http.StatusCreated {
+		t.Errorf("a new login for the second run: %d %s, want 201", status, raw)
 	}
 }
 
@@ -1315,6 +1352,8 @@ func TestCorrectionInvalidatesSignatures(t *testing.T) {
 			t.Errorf("revisions %+v, want 60 then 62", revs.Items)
 		}
 
+		// Re-signing needs a new login, and auth_time has whole seconds.
+		time.Sleep(1100 * time.Millisecond)
 		if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
 			t.Fatalf("alice signs step 1 again: %d %s", status, body)
 		}
