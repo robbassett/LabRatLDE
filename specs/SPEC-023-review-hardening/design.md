@@ -9,7 +9,7 @@ No new Go dependencies, packages or interfaces. One migration. `golangci-lint` r
 ## 2. Data and interfaces
 
 **Uploads (R01, R02).** `streamReadings` now runs in three steps:
-1. A short read-only transaction finds the instrument and run, so a bad id fails before the body is read.
+1. A short read-only transaction checks the caller's role (R12; the database gate still enforces it) and finds the instrument and run, so a bad request fails before the body is read.
 2. The body goes to a temp file (mode 0600, removed on return) through `MaxBytesReader`. No transaction is open.
 3. One write transaction inserts the dataset node row and readings with no chain lock, then takes it to write the node's audit event, the edges and `instrument.ingested`.
 
@@ -39,8 +39,8 @@ None. The sign dialog already sends what the API needs. The item number appears 
 
 ## 4. Testing approach
 
-- R01: a test holds an upload open through `io.Pipe` and requires an audited write to complete meanwhile. It is run against the unfixed code first, to show that it fails.
-- R04, R05: storage tests in `internal/storage/integration_test.go`, plus the existing prod signing tests through the API.
+- R01: `internal/api/upload_integration_test.go` holds an upload open through `io.Pipe`, waits for its spool file, then requires no acquired connections and an audited write that completes. An earlier version, without the spool wait, failed on the unfixed code: the write hung until its 5-second timeout.
+- R04, R05: `internal/storage/signature_link_integration_test.go` and `TestSignatureChallengeRules`, plus the existing prod signing tests through the API. The unique index and the `LDE03` branch for a changed challenge are second lines: `signatures_guard` and the `xmin` check reject those cases first in any path reachable today, so no test reaches them.
 - Everything else is `Test: no`, checked by review and the manual steps in `tasks.md`.
 - This spec's migration stops older branches signing, so it uses its own database, `lde_spec023`, not `lde`.
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,9 @@ import (
 
 // SPEC-023-R01
 func TestUploadDoesNotBlockAuditedWrites(t *testing.T) {
+	spoolDir := t.TempDir()
+	t.Setenv("TMPDIR", spoolDir) // os.TempDir elsewhere
+	t.Setenv("TMP", spoolDir)    // os.TempDir on Windows
 	db := openTestDB(t)
 	tenant := newTenant(t, db)
 	srv := httptest.NewServer(api.New(config.Config{Env: "dev", MaxIngestBytes: 1 << 20}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
@@ -48,12 +52,28 @@ func TestUploadDoesNotBlockAuditedWrites(t *testing.T) {
 		uploaded <- resp.StatusCode
 	}()
 	const reading = `{"ts":"2026-01-01T00:00:00Z","channel":"od600","value":0.5,"unit":"AU"}` + "\n"
-	// The pipe is unbuffered, so a finished write means the handler's side took it:
-	// the second write can't finish until the handler is reading the body.
-	for range 2 {
-		if _, err := sender.Write([]byte(reading)); err != nil {
+	if _, err := sender.Write([]byte(reading)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The spool file appearing shows the handler is receiving the body. It is
+	// created after the lookup transaction commits, so no connection should be held.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		spools, err := filepath.Glob(filepath.Join(spoolDir, "labrat-ingest-*"))
+		if err != nil {
 			t.Fatal(err)
 		}
+		if len(spools) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the handler never started receiving the upload into a temp file")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if held := db.Pool.Stat().AcquiredConns(); held != 0 {
+		t.Errorf("%d database connections held while receiving an upload, want 0", held)
 	}
 
 	// An audited write in the same tenant finishes while the upload is open.

@@ -195,8 +195,17 @@ type upload struct {
 	instrumentNode, runNode    string
 }
 
-// resolve finds the lineage nodes the dataset will link to, and its default label.
+// resolve refuses a caller who couldn't store the readings, so they can't fill
+// the temp disk (SPEC-023-R12; the database's role gate is what enforces it). It
+// then finds the lineage nodes the dataset will link to, and its default label.
 func (u *upload) resolve(ctx context.Context, tx pgx.Tx) error {
+	var allowed bool
+	if err := tx.QueryRow(ctx, `SELECT lde_has_role('scientist')`).Scan(&allowed); err != nil {
+		return err
+	}
+	if !allowed {
+		return forbidden("uploading readings needs the scientist role")
+	}
 	var name string
 	err := tx.QueryRow(ctx, `SELECT node_id, name FROM instruments WHERE id = $1`, u.instrumentID).Scan(&u.instrumentNode, &name)
 	if errors.Is(err, pgx.ErrNoRows) {

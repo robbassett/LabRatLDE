@@ -29,7 +29,7 @@ A code review of the SPEC-008 branch found that one instrument upload can stop e
 **Out of scope**
 - Rewriting the existing integration tests.
 - Refusing `dev` signatures on GxP tenants: tenants default to GxP, so this would break dev mode.
-- A read timeout on uploads: a stalled upload no longer holds anything shared.
+- A read timeout or concurrency limit on uploads: a stalled upload no longer holds a lock or database connection. It does still hold temp disk (up to `LDE_MAX_INGEST_BYTES` each) and a file handle, so limits on those are left to the proxy.
 
 ## 3. Requirements (EARS)
 
@@ -46,6 +46,7 @@ A code review of the SPEC-008 branch found that one instrument upload can stop e
 | SPEC-023-R09 | The API shall verify a re-authentication token before opening the signing transaction. | no | connection use |
 | SPEC-023-R10 | `signRun` and `decideChangeSet` shall each have a cognitive complexity under 30, the manifest's bytes shall not change, and the dataset ingest join shall be defined once. | no | maintainability |
 | SPEC-023-R11 | CI shall fail when a non-test Go function exceeds cognitive complexity 50, and `make schema` shall write the migrated schema to `docs/schema.sql`. | no | maintainability |
+| SPEC-023-R12 | If a caller without the `scientist` role starts an instrument upload, then the API shall respond 403 before reading the body. | no | availability |
 
 ## 4. Acceptance examples
 
