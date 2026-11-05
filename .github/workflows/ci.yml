@@ -33,6 +33,9 @@ jobs:
         working-directory: web
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
       - run: go test -race -count=1 ./...
         env:
           LDE_TEST_DATABASE_URL: postgres://lde:lde@localhost:5432/lde?sslmode=disable
