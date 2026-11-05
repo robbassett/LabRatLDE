@@ -65,3 +65,4 @@ Fixture: tenant time zone `Europe/London`, today 2026-10-20. Planned run `R`, pr
 |---|---|---|---|
 | 1 | Who may override a preflight error: any scientist starting the run, or only reviewer/QA? Recommendation: any scientist with a reason in R&D; a later per-experiment policy for GMP. | Rob Bassett | |
 | 2 | Are user-defined checks needed (e.g. "requires a positive control")? Recommendation: later, expressed in protocol frontmatter. | Rob Bassett | |
+| 3 | SPEC-009-R05 refuses a run whose params don't validate, so the R01–R04 fixture (`cycles: 50` over a maximum of 45) can't be created, and R04 can't fire through the API. Drop R04's `params_schema` check, or keep it as a second line and change the fixture? (Raised by the SPEC-009 review, 2026-11-05.) | Rob Bassett | |
