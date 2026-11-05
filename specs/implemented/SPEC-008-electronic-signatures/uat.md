@@ -97,6 +97,9 @@ In a helper terminal, after `. tools/keycloak/uat.env`, run `tokens` (it lasts 1
 ```bash
 api() { # api TOKEN METHOD PATH [JSON] -> "body [STATUS]"
   local tok=$1 m=$2 p=$3 b=${4:-}
+  # An empty token shifts the arguments, and curl then prints only [000].
+  case "$tok" in GET|POST|PUT|PATCH|DELETE) echo "api: the token is empty: run tokens in this terminal" >&2; return 1 ;; esac
+  [ -n "$LAB" ] || { echo "api: LAB is not set: run . tools/keycloak/uat.env in this terminal" >&2; return 1; }
   curl -s -w ' [%{http_code}]\n' -X "$m" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' ${b:+-d "$b"} "$LAB$p"
 }
 body()  { sed 's/ \[[0-9]*\]$//'; }
