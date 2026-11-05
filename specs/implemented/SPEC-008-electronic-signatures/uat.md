@@ -596,14 +596,22 @@ field() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
 2. LabRat should now say there is no principal for this identity (`403`). That is expected: they don't exist in LabRat yet.
 3. In the Network tab, click the `POST` request named `token` and open **Response**. Copy the value of `access_token`, run `claims` and paste it. Check: `ver` is `2.0`, `iss` equals `$LDE_OIDC_ISSUER`, `aud` equals `$ENTRA_CLIENT`, `tid` equals `$ENTRA_TENANT`. Note `sub`.
 4. Do the same with `id_token` from that response. Check: `aud` equals `$ENTRA_CLIENT`, **`sub` is identical to the access token's**, and `auth_time` is present. If any of this differs, stop and see the table below.
-5. Create the user. This runs as the database owner. Copy the id it prints:
+5. Create the user. This runs as the database owner, so first check this terminal has the settings from part B. Replace the placeholder, then run:
 
 ```bash
-export ENTRA_SUB=<sub from step 3>
-go run ./cmd/server bootstrap-admin --tenant $ENTRA_TENANT --slug entra-uat --name "Entra UAT" \
-  --issuer "$LDE_OIDC_ISSUER" --subject "$ENTRA_SUB" --handle alice --display-name "Alice Test" --email alice@lab.test
-export ALICE=<id it printed>
+export ENTRA_SUB='<sub from step 3>'
+echo "tenant=[$ENTRA_TENANT] env=[$LDE_ENV] db=[$LDE_DATABASE_URL] issuer=[$LDE_OIDC_ISSUER] sub=[$ENTRA_SUB]"
 ```
+
+Every bracket must be filled in, with `env=[prod]` and a `db` ending in `lde_entra?sslmode=disable`. If any is empty, run the `export` lines from part B in this terminal. On a checkout without SPEC-023, a missing `LDE_ENV` or `LDE_DATABASE_URL` quietly means dev mode and the shared `lde` database, so don't skip this. Then:
+
+```bash
+export ALICE=$(go run ./cmd/server bootstrap-admin --tenant "$ENTRA_TENANT" --slug entra-uat --name "Entra UAT" \
+  --issuer "$LDE_OIDC_ISSUER" --subject "$ENTRA_SUB" --handle alice --display-name "Alice Test" --email alice@lab.test | tail -1)
+echo "ALICE=[$ALICE]"
+```
+
+`ALICE` must be a UUID. If it's empty, read the error above it.
 
 6. Reload the browser page: you should now be signed in as `alice`.
 7. Give them the role that signs step 1, and make two finished runs. Copy `TOKEN` from the same `access_token`, or from the `Authorization` header of any `/v1/` request, without the word `Bearer`:
