@@ -263,50 +263,120 @@ func loadSignaturesFor(ctx context.Context, tx pgx.Tx, runIDs []string) (map[str
 // between the IdP and this server. signRun records no later than the current time.
 const maxAuthTimeSkew = 60 * time.Second
 
-// checkReauth proves the signer logged in just now (SPEC-008-R04). In prod
-// the ID token must come from the issuer, for the UI client and the caller's
-// own subject, with an auth_time no older than the configured age. In dev no
-// token is needed. It writes nothing. It returns when the login happened and
-// how it was proved.
-func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, token string) (time.Time, string, error) {
+// maxChallengeSkew is how long before its challenge a login may seem to have
+// happened, for clock skew between the IdP and the database.
+const maxChallengeSkew = 5 * time.Second
+
+// checkReauth proves the signer logged in for this signature (SPEC-008-R04). In
+// prod the ID token must come from the issuer, for the UI client and the
+// caller's own subject. Its nonce must name an unused, unexpired challenge
+// issued to the caller for this run and manifest, and its auth_time must not be
+// earlier than that challenge: a recent login made for something else doesn't
+// count. In dev no token is needed. It writes nothing. It returns when the login
+// happened, how it was proved, and the challenge to use up ("" in dev).
+func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, runID, sha, token string) (time.Time, string, string, error) {
 	if s.cfg.Env != "prod" {
 		var now time.Time
 		err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now)
-		return now, "dev", err
+		return now, "dev", "", err
 	}
 	if s.reauth == nil {
-		return time.Time{}, "", &httpError{http.StatusNotImplemented, "signing needs LDE_OIDC_UI_CLIENT_ID to be configured"}
+		return time.Time{}, "", "", &httpError{http.StatusNotImplemented, "signing needs LDE_OIDC_UI_CLIENT_ID to be configured"}
 	}
 	if token == "" {
-		return time.Time{}, "", unauthorized("reauth_token is required")
+		return time.Time{}, "", "", unauthorized("reauth_token is required")
 	}
 	tok, err := s.reauth.Verify(ctx, token)
 	if err != nil {
 		s.log.Info("reauth token rejected", "err", err)
-		return time.Time{}, "", unauthorized("invalid reauth_token")
+		return time.Time{}, "", "", unauthorized("invalid reauth_token")
 	}
 	var claims struct {
 		AuthTime *int64 `json:"auth_time"`
 	}
 	if err := tok.Claims(&claims); err != nil || claims.AuthTime == nil {
-		return time.Time{}, "", unauthorized("reauth_token has no auth_time")
+		return time.Time{}, "", "", unauthorized("reauth_token has no auth_time")
 	}
 	var issuer, subject string
 	if err := tx.QueryRow(ctx, `SELECT issuer, subject FROM principals WHERE id = $1`, p.As.ID).Scan(&issuer, &subject); err != nil {
-		return time.Time{}, "", err
+		return time.Time{}, "", "", err
 	}
 	if tok.Issuer != issuer || tok.Subject != subject {
-		return time.Time{}, "", unauthorized("reauth_token is for someone else")
+		return time.Time{}, "", "", unauthorized("reauth_token is for someone else")
 	}
+	notRecent := unauthorized("log in again to sign: your login is not recent enough")
 	at := time.Unix(*claims.AuthTime, 0)
 	age := time.Since(at)
 	if age > s.cfg.SignReauthMaxAge || age < -maxAuthTimeSkew {
-		return time.Time{}, "", unauthorized("log in again to sign: your login is not recent enough")
+		return time.Time{}, "", "", notRecent
 	}
-	return at, "oidc", nil
+	if !validUUID(tok.Nonce) {
+		return time.Time{}, "", "", notRecent
+	}
+	var issued time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT created_at FROM signature_challenges
+		WHERE id = $1 AND principal_id = $2 AND run_id = $3 AND manifest_sha256 = $4 AND used_at IS NULL
+		  AND clock_timestamp() - created_at <= make_interval(secs => $5)`,
+		tok.Nonce, p.As.ID, runID, sha, s.cfg.SignReauthMaxAge.Seconds()).Scan(&issued)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, "", "", notRecent
+	} else if err != nil {
+		return time.Time{}, "", "", err
+	}
+	if at.Add(maxChallengeSkew).Before(issued) {
+		return time.Time{}, "", "", notRecent
+	}
+	return at, "oidc", tok.Nonce, nil
 }
 
 var sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// createSignChallenge starts one signing attempt in prod: its id goes to the IdP
+// as the nonce of the forced login (SPEC-008-R04).
+//
+//	POST /v1/runs/{id}/sign-challenge   {"manifest_sha256": "..."}
+func (s *Server) createSignChallenge(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("run"))
+		return
+	}
+	var req struct {
+		ManifestSHA256 string `json:"manifest_sha256"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if !sha256HexRE.MatchString(req.ManifestSHA256) {
+		s.fail(w, r, badRequest("manifest_sha256 must be 64 lowercase hex characters"))
+		return
+	}
+	var nonce string
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM runs WHERE id = $1`, id).Scan(&one); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO signature_challenges (tenant_id, run_id, manifest_sha256) VALUES ($1, $2, $3) RETURNING id`,
+			p.Tenant, id, req.ManifestSHA256).Scan(&nonce); err != nil {
+			return err
+		}
+		_, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
+			Actor: p.Actor, Action: "signature.challenge_issued", EntityType: "signature_challenge", EntityID: nonce,
+			Payload: map[string]any{"run_id": id, "manifest_sha256": req.ManifestSHA256},
+		})
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"nonce": nonce})
+}
 
 // signRun applies the next signature of a run's policy.
 //
@@ -348,7 +418,7 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 
 	var out domain.Signature
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
-		reauthAt, method, err := s.checkReauth(ctx, tx, p, req.ReauthToken)
+		reauthAt, method, challenge, err := s.checkReauth(ctx, tx, p, id, req.ManifestSHA256, req.ReauthToken)
 		if err != nil {
 			return err
 		}
@@ -368,6 +438,17 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 		if sha != req.ManifestSHA256 {
 			return &httpError{http.StatusConflict, "the record changed since you viewed it: review the new manifest and sign again"}
 		}
+		// A challenge proves one signature. Two requests racing on it can't both
+		// pass: the second finds it used, or fails here once the first commits.
+		if challenge != "" {
+			tag, err := tx.Exec(ctx, `UPDATE signature_challenges SET used_at = now() WHERE id = $1 AND used_at IS NULL`, challenge)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return unauthorized("log in again to sign: your login is not recent enough")
+			}
+		}
 		var manifestID string
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO signature_manifests (tenant_id, run_id, manifest) VALUES ($1, $2, $3) RETURNING id`,
@@ -386,7 +467,7 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
 			Actor: p.Actor, Action: "signature.applied", EntityType: "signature", EntityID: sigID, Reason: req.Meaning,
-			Payload: map[string]any{"run_id": id, "step": req.Step, "manifest_sha256": sha, "comment": comment},
+			Payload: map[string]any{"run_id": id, "step": req.Step, "manifest_sha256": sha, "comment": comment, "reauth_challenge": challenge},
 		}); err != nil {
 			return err
 		}

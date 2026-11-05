@@ -553,7 +553,7 @@ func TestProtocolVersionsAreAppendOnly(t *testing.T) {
 		_, err = db.Pool.Exec(ctx, stmt, tenant)
 		wantCode(t, "owner: "+stmt, err, storage.CodeAppendOnly)
 	}
-	_, err = db.Pool.Exec(ctx, `TRUNCATE protocol_versions, runs, signature_manifests, signatures`) // runs and the signature tables reference it, so a bare TRUNCATE hits 0A000 first
+	_, err = db.Pool.Exec(ctx, `TRUNCATE protocol_versions, runs, signature_manifests, signatures, signature_challenges`) // runs and the signature tables reference it, so a bare TRUNCATE hits 0A000 first
 	wantCode(t, "owner: TRUNCATE", err, storage.CodeAppendOnly)
 	// The signature tables raise LDE03 too, so check the error is this table's.
 	if msg := storage.ErrorMessage(err); !strings.Contains(msg, "protocol") {

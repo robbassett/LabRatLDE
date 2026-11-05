@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/api"
+	"github.com/Accelerate-Biotech/LabRatLDE/internal/audit"
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/config"
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/identity"
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/storage"
@@ -215,14 +217,25 @@ func prodServer(t *testing.T, db *storage.DB, key *rsa.PrivateKey) *httptest.Ser
 	return srv
 }
 
-// reauthToken is an ID token for the UI client whose login happened age ago.
-func reauthToken(t *testing.T, key *rsa.PrivateKey, subject string, age time.Duration) string {
+// reauthToken is an ID token for the UI client whose login happened age ago,
+// carrying nonce.
+func reauthToken(t *testing.T, key *rsa.PrivateKey, subject, nonce string, age time.Duration) string {
 	t.Helper()
 	now := time.Now()
 	return mintToken(t, key, map[string]any{
-		"iss": testIssuer, "aud": "labrat-ui", "sub": subject,
+		"iss": testIssuer, "aud": "labrat-ui", "sub": subject, "nonce": nonce,
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "auth_time": now.Add(-age).Unix(),
 	})
+}
+
+// signChallenge starts a signing attempt as the holder of access and returns its nonce.
+func signChallenge(t *testing.T, srv *httptest.Server, access, runID, sha string) string {
+	t.Helper()
+	var c struct {
+		Nonce string `json:"nonce"`
+	}
+	sendWant(t, srv, access, nil, http.StatusCreated, "POST", "/v1/runs/"+runID+"/sign-challenge", map[string]string{"manifest_sha256": sha}, &c)
+	return c.Nonce
 }
 
 // send makes a request with an optional bearer token and extra headers, and
@@ -873,15 +886,17 @@ func TestManifestIsCanonical(t *testing.T) {
 	}
 }
 
-// signAs gets the run's manifest as who, then signs it with a login 30 s old.
+// signAs gets the run's manifest as who, starts a signing attempt, then signs
+// with a login made for it.
 func signAs(t *testing.T, srv *httptest.Server, key *rsa.PrivateKey, who identity.Principal, runID string, step int, meaning string) (int, []byte) {
 	t.Helper()
 	access := mintToken(t, key, claims(who.TenantID, who.Handle))
 	var m manifestResponse
 	sendWant(t, srv, access, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &m)
+	nonce := signChallenge(t, srv, access, runID, m.SHA256)
 	return send(t, srv, access, nil, "POST", "/v1/runs/"+runID+"/signatures", map[string]any{
 		"step": step, "meaning": meaning, "manifest_sha256": m.SHA256,
-		"reauth_token": reauthToken(t, key, who.Handle, 30*time.Second),
+		"reauth_token": reauthToken(t, key, who.Handle, nonce, 0),
 	})
 }
 
@@ -952,9 +967,9 @@ func TestSignatureRecord(t *testing.T) {
 	if printed != "Alice Ng" || meaning != "author" || step != 1 || hash != m.SHA256 || method != "oidc" {
 		t.Errorf("signature = %q %q step %d hash %s method %s, want Alice Ng author 1 %s oidc", printed, meaning, step, hash, method, m.SHA256)
 	}
-	// The token's auth_time has whole seconds, 30 s before the request.
-	if reauthAt.Nanosecond() != 0 || reauthAt.Before(before.Add(-31*time.Second)) || reauthAt.After(after.Add(-30*time.Second)) {
-		t.Errorf("reauth_at %s, want the token's auth_time, 30 s before %s", reauthAt, before)
+	// The token's auth_time has whole seconds, and the login was made during the attempt.
+	if reauthAt.Nanosecond() != 0 || reauthAt.Before(before.Add(-time.Second)) || reauthAt.After(after) {
+		t.Errorf("reauth_at %s, want the token's auth_time, between %s and %s", reauthAt, before, after)
 	}
 
 	var reason, eventHash, actor string
@@ -1010,18 +1025,45 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 	runID, _ := completedRun(t, srv, alice)
 	var m manifestResponse
 	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &m)
+	nonce := signChallenge(t, srv, alice, runID, m.SHA256)
+	bobs := signChallenge(t, srv, mintToken(t, key, claims(f.tenant, "bob")), runID, m.SHA256)
+	otherManifest := signChallenge(t, srv, alice, runID, strings.Repeat("0", 64))
+	// An expired challenge can only be made as the owner, who sets its time.
+	var expired string
+	err := db.WithOwner(context.Background(), func(tx pgx.Tx) error {
+		if err := tx.QueryRow(context.Background(), `
+			INSERT INTO signature_challenges (tenant_id, principal_id, run_id, manifest_sha256, created_at)
+			VALUES ($1, $2, $3, $4, now() - interval '10 minutes') RETURNING id`, f.tenant, f.alice.ID, runID, m.SHA256).Scan(&expired); err != nil {
+			return err
+		}
+		_, err := audit.Append(context.Background(), tx, f.tenant, audit.Entry{
+			Actor: "system:test", Action: "signature.challenge_issued", EntityType: "signature_challenge", EntityID: expired,
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	noAuthTime := map[string]any{"iss": testIssuer, "aud": "labrat-ui", "sub": "alice",
+	noAuthTime := map[string]any{"iss": testIssuer, "aud": "labrat-ui", "sub": "alice", "nonce": nonce,
 		"iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix()}
-	wrongAudience := map[string]any{"iss": testIssuer, "aud": "labrat", "sub": "alice", "auth_time": time.Now().Add(-30 * time.Second).Unix(),
+	wrongAudience := map[string]any{"iss": testIssuer, "aud": "labrat", "sub": "alice", "nonce": nonce, "auth_time": time.Now().Unix(),
 		"iat": time.Now().Unix(), "exp": time.Now().Add(5 * time.Minute).Unix()}
 	cases := []struct{ name, token string }{
 		{"no token", ""},
-		{"10 minutes old", reauthToken(t, key, "alice", 10*time.Minute)},
+		{"10 minutes old", reauthToken(t, key, "alice", nonce, 10*time.Minute)},
 		{"no auth_time", mintToken(t, key, noAuthTime)},
-		{"bob's token", reauthToken(t, key, "bob", 30*time.Second)},
+		{"bob's token", reauthToken(t, key, "bob", nonce, 0)},
 		{"another audience", mintToken(t, key, wrongAudience)},
-		{"another key", reauthToken(t, newKey(t), "alice", 30*time.Second)},
+		{"another key", reauthToken(t, newKey(t), "alice", nonce, 0)},
+		// UAT-15: a sign-in a minute ago isn't a login for this signature, even with the right nonce.
+		{"recent login before the attempt", reauthToken(t, key, "alice", nonce, time.Minute)},
+		{"recent login with no nonce", reauthToken(t, key, "alice", "", 0)},
+		{"a nonce that isn't a challenge", reauthToken(t, key, "alice", "00000000-0000-4000-8000-000000000099", 0)},
+		{"a nonce that isn't a uuid", reauthToken(t, key, "alice", "x' OR '1'='1", 0)},
+		{"bob's challenge", reauthToken(t, key, "alice", bobs, 0)},
+		{"a challenge for another manifest", reauthToken(t, key, "alice", otherManifest, 0)},
+		{"an expired challenge", reauthToken(t, key, "alice", expired, 0)},
 	}
 	for _, c := range cases {
 		before := auditCount(t, db, f.tenant)
@@ -1038,8 +1080,15 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 			t.Errorf("%s: audit chain grew from %d to %d events", c.name, before, after)
 		}
 	}
-	if status, body := signAs(t, srv, key, f.alice, runID, 1, "author"); status != http.StatusCreated {
-		t.Errorf("30-second token: %d %s, want 201", status, body)
+	body := map[string]any{
+		"step": 1, "meaning": "author", "manifest_sha256": m.SHA256, "reauth_token": reauthToken(t, key, "alice", nonce, 0),
+	}
+	if status, raw := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", body); status != http.StatusCreated {
+		t.Errorf("a login made for this attempt: %d %s, want 201", status, raw)
+	}
+	// One login proves one signature: the same token can't be used again.
+	if status, raw := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", body); status != http.StatusUnauthorized {
+		t.Errorf("the same token again: %d %s, want 401", status, raw)
 	}
 }
 
@@ -1058,12 +1107,13 @@ func TestSigningBindsToShownManifest(t *testing.T) {
 	}
 	var shown manifestResponse
 	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+runID+"/manifest", nil, &shown)
+	nonce := signChallenge(t, srv, alice, runID, shown.SHA256)
 	revise("S1b")
 
 	before := auditCount(t, db, f.tenant)
 	status, body := send(t, srv, alice, nil, "POST", "/v1/runs/"+runID+"/signatures", map[string]any{
 		"step": 1, "meaning": "author", "manifest_sha256": shown.SHA256,
-		"reauth_token": reauthToken(t, key, "alice", 30*time.Second),
+		"reauth_token": reauthToken(t, key, "alice", nonce, 0),
 	})
 	if status != http.StatusConflict {
 		t.Fatalf("signing the earlier hash: %d %s, want 409", status, body)

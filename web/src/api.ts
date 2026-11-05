@@ -582,6 +582,11 @@ export function getManifest(runId: string): Promise<RunManifest> {
 
 // signRun applies the next policy step. manifestSha256 is the hash the signer saw; reauthToken is the
 // fresh ID token in prod and omitted in dev.
+// createSignChallenge starts one signing attempt: the nonce goes to the IdP with the forced login.
+export function createSignChallenge(runId: string, manifestSha256: string): Promise<{ nonce: string }> {
+  return post(`/v1/runs/${encodeURIComponent(runId)}/sign-challenge`, { manifest_sha256: manifestSha256 });
+}
+
 export function signRun(
   runId: string,
   req: { step: number; meaning: string; manifest_sha256: string; comment?: string; reauth_token?: string },

@@ -442,11 +442,13 @@ Stop the dev server and follow section 1.3 (prod server, `tokens`, bootstrap, pe
   4. In the UI as alice, open Plate Q, click Sign, tick the box, click Sign. At the Keycloak login page, log in as `bob` instead of alice.
   5. Repeat in a new private window as alice, but this time wait about 2.5 minutes at the Keycloak login form before entering the password.
   6. `api $TOKEN_ALICE GET /v1/runs/$RUN_Q/signatures`, and count the events again (`Q1`).
+  7. Abandon an attempt: as alice, open Plate Q, click Sign, tick the box, click Sign. At the Keycloak login page, press the browser's Back button without entering a password. If the app shows its sign-in page, sign in, then look at Plate Q.
 - **Expected:**
-  - Steps 2 and 3: `[401]`; no signature (an access token is not a valid proof; the proof must be an ID token for the UI client with `auth_time`).
+  - Steps 2 and 3: `[401]`; no signature (an access token is not a valid proof; the proof must be an ID token for the UI client, from a login made for this attempt).
   - Step 4: nothing is signed in alice's name. Write down exactly what the screen shows (the plan does not specify the message; bob holds no scientist role, so a refusal is expected).
   - Step 5: after the login the UI shows "log in again to sign: your login is not recent enough" (HTTP 401) and nothing is signed.
-  - Step 6: `items: []`, and the only new events since `Q0` are the ones caused by your logins and run creation, no `signature.applied`.
+  - Step 6: `items: []`, and no `signature.applied` since `Q0`. Each attempt that reached the login page adds a `signature.challenge_issued` event.
+  - Step 7: nothing is signed: no signature appears, even if signing in needed no password. The Sign button is available again, and signing needs a new password entry.
 - **Result:** Pass / Fail · Notes:
 
 ### UAT-16: Who may change a signing policy, in GxP and non-GxP

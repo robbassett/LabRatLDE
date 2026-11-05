@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("POST /v1/runs/{id}/transitions", s.transitionRun)
 	v1.HandleFunc("PATCH /v1/runs/{id}/params", s.patchRunParams)
 	v1.HandleFunc("GET /v1/runs/{id}/manifest", s.getManifest)
+	v1.HandleFunc("POST /v1/runs/{id}/sign-challenge", s.createSignChallenge)
 	v1.HandleFunc("POST /v1/runs/{id}/signatures", s.signRun)
 	v1.HandleFunc("GET /v1/runs/{id}/signatures", s.listSignatures)
 	v1.HandleFunc("GET /v1/inbox/signatures", s.listSignoffs)

@@ -333,6 +333,7 @@ Configuration is environment-only; see [`.env.example`](.env.example).
 | `GET`  | `/v1/runs/{id}` | Fetch run state |
 | `POST` | `/v1/runs/{id}/transitions` | Advance the state machine; `to: signed` is `400` (sign instead) |
 | `GET`  | `/v1/runs/{id}/manifest` | The canonical manifest to sign, its SHA-256, and what changed since the last valid signature |
+| `POST` | `/v1/runs/{id}/sign-challenge` | Start one signing attempt; its id goes to the IdP as the `nonce` of the forced login (see [docs/signatures.md](docs/signatures.md)) |
 | `POST`/`GET` | `/v1/runs/{id}/signatures` | Apply the next signing step, or list a run's signatures (see [docs/signatures.md](docs/signatures.md)) |
 | `GET`  | `/v1/inbox/signatures` | Runs waiting for the caller's signature |
 | `PATCH` | `/v1/experiments/{id}/signing-policy` | Change an experiment's signing policy (`qa`/`admin` in GxP; reason) |

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { clearSession, getMe, meta as loadMeta, setAccessToken, setUnauthorizedHandler, storedActor, type Meta } from './api';
-import { completeSignIn, endSessionUrl, setLatestIdToken, watchIdle } from './auth';
+import { clearPendingSign, completeSignIn, endSessionUrl, setLatestIdToken, watchIdle } from './auth';
 import SignIn from './SignIn';
 import Workspace from './Workspace';
 
@@ -37,12 +37,16 @@ export default function App() {
       if (!m.oidc) return;
       try {
         const tokens = await completeSignIn(m.oidc);
+        // Anything but the return from a forced login abandons a pending signature,
+        // and only that return's ID token can prove one (SPEC-008-R04).
+        if (!tokens?.reauth) clearPendingSign();
         if (!tokens || !live) return;
         setAccessToken(tokens.accessToken);
-        setLatestIdToken(tokens.idToken);
+        setLatestIdToken(tokens.reauth ? tokens.idToken : undefined);
         const me = await getMe();
         if (live) setSession({ handle: me.on_behalf_of ? me.actor : me.handle, idToken: tokens.idToken });
       } catch (err: unknown) {
+        clearPendingSign();
         setAccessToken(null);
         if (live) setMessage(err instanceof Error ? err.message : String(err));
       }

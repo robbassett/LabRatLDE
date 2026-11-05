@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, getManifest, meta as loadMeta, signRun, type OIDCSettings, type RunDetail, type RunManifest } from './api';
-import { beginReauth, reauthToken, type PendingSign } from './auth';
+import { ApiError, createSignChallenge, getManifest, meta as loadMeta, signRun, type OIDCSettings, type RunDetail, type RunManifest } from './api';
+import { beginReauth, clearPendingSign, reauthToken, type PendingSign } from './auth';
 
 type Props = {
   run: RunDetail;
@@ -113,12 +113,25 @@ export default function SignDialog({ run, step, meaning, resume, onClose, onSign
     setBusy(true);
     setError(null);
     try {
-      await beginReauth(oidc, { runId: run.id, step, meaning, comment: comment.trim(), sha256: manifest.sha256 });
+      const { nonce } = await createSignChallenge(run.id, manifest.sha256);
+      await beginReauth(oidc, { runId: run.id, step, meaning, comment: comment.trim(), sha256: manifest.sha256 }, nonce);
     } catch (err: unknown) {
       setError(errorMessage(err));
       setBusy(false);
     }
   }
+
+  // Back from the login page with this page restored as it was: the attempt is
+  // abandoned, so nothing is pending and the user can confirm again.
+  useEffect(() => {
+    const restored = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      clearPendingSign();
+      setBusy(false);
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
 
   let shown: Shown | null = null;
   if (manifest) {

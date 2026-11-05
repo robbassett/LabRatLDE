@@ -8,9 +8,11 @@ const PENDING_KEY = 'labrat.oidc.pending';
 
 type Discovery = { authorization_endpoint: string; token_endpoint: string; end_session_endpoint?: string };
 
-type Pending = { verifier: string; state: string; hash: string };
+type Pending = { verifier: string; state: string; hash: string; reauth: boolean };
 
-export type Tokens = { accessToken: string; idToken?: string };
+// reauth says these tokens came back from a forced login for a signature, not an
+// ordinary sign-in.
+export type Tokens = { accessToken: string; idToken?: string; reauth: boolean };
 
 let discovery: Promise<Discovery> | null = null;
 
@@ -49,9 +51,9 @@ function redirectUri(): string {
 
 // redirect sends the browser to the IdP's authorization endpoint. extra adds
 // query parameters, such as the ones that force a fresh login.
-async function redirect(oidc: OIDCSettings, extra: Record<string, string>): Promise<void> {
+async function redirect(oidc: OIDCSettings, extra: Record<string, string>, reauth: boolean): Promise<void> {
   const d = await discover(oidc.issuer);
-  const pending: Pending = { verifier: randomString(), state: randomString(), hash: location.hash };
+  const pending: Pending = { verifier: randomString(), state: randomString(), hash: location.hash, reauth };
   try {
     sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
   } catch {
@@ -74,7 +76,7 @@ async function redirect(oidc: OIDCSettings, extra: Record<string, string>): Prom
 // beginSignIn sends the browser to the IdP. The open tab (location.hash) is
 // restored on return.
 export function beginSignIn(oidc: OIDCSettings): Promise<void> {
-  return redirect(oidc, {});
+  return redirect(oidc, {}, false);
 }
 
 // PendingSign is a signature the user confirmed and the re-authentication
@@ -84,23 +86,29 @@ export type PendingSign = { runId: string; step: number; meaning: string; commen
 const SIGN_KEY = 'labrat.sign.pending';
 
 // beginReauth stores the pending signature and sends the browser to the IdP
-// with a forced fresh login. The open tab is restored on return, as for
-// beginSignIn.
-export async function beginReauth(oidc: OIDCSettings, pending: PendingSign): Promise<void> {
+// with a forced fresh login, carrying the server's challenge as the nonce. The
+// open tab is restored on return, as for beginSignIn.
+export async function beginReauth(oidc: OIDCSettings, pending: PendingSign, nonce: string): Promise<void> {
   try {
     sessionStorage.setItem(SIGN_KEY, JSON.stringify(pending));
   } catch {
     throw new Error('Signing needs session storage, which this browser has disabled.');
   }
   try {
-    await redirect(oidc, { prompt: 'login', max_age: '0' });
+    await redirect(oidc, { prompt: 'login', max_age: '0', nonce }, true);
   } catch (err) {
-    try {
-      sessionStorage.removeItem(SIGN_KEY);
-    } catch {
-      // Nothing stored, nothing to clear.
-    }
+    clearPendingSign();
     throw err;
+  }
+}
+
+// clearPendingSign abandons a signature. Only the forced login it started may
+// complete it: a later sign-in in this tab must not sign anything.
+export function clearPendingSign(): void {
+  try {
+    sessionStorage.removeItem(SIGN_KEY);
+  } catch {
+    // Nothing stored, nothing to clear.
   }
 }
 
@@ -173,7 +181,7 @@ export async function completeSignIn(oidc: OIDCSettings): Promise<Tokens | null>
   if (!res.ok) throw new Error(`Sign-in failed: the identity provider returned ${res.status}`);
   const body = (await res.json()) as { access_token?: string; id_token?: string };
   if (!body.access_token) throw new Error('Sign-in failed: no access token was returned');
-  return { accessToken: body.access_token, idToken: body.id_token };
+  return { accessToken: body.access_token, idToken: body.id_token, reauth: pending.reauth === true };
 }
 
 // watchIdle calls onIdle after seconds without a pointer, key or wheel event
