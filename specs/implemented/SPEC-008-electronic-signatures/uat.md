@@ -581,7 +581,8 @@ In a second terminal, run the same `export` lines (skip the database and server 
 ```bash
 claims() { # paste a token at the prompt; prints its claims. Nothing leaves your machine.
   local t; read -rsp 'Token: ' t; echo
-  printf %s "$t" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(JSON.parse(Buffer.from(s.trim().split(".")[1],"base64url")),null,1)))'
+  # "command" skips Git Bash's alias of node to winpty, which refuses piped input ("stdin is not a tty").
+  printf %s "$t" | command node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(JSON.parse(Buffer.from(s.trim().split(".")[1],"base64url")),null,1)))'
 }
 api() { # api METHOD PATH [JSON] -> "body [STATUS]"; uses $TOKEN
   curl -s -w ' [%{http_code}]\n' -X "$1" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"} "$LAB$2"
