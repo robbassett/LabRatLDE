@@ -31,6 +31,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-020 | Validation documentation | Brief only (§5, Phase 1) |
 | SPEC-021 | [Reference identity broker and IdP recipes](SPEC-021-identity-broker/requirements.md) | Draft |
 | SPEC-022 | [Validation agents](SPEC-022-validation-agents/requirements.md) | Draft |
+| SPEC-023 | [Review hardening](SPEC-023-review-hardening/requirements.md) | Approved |
 
 **SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008), `LDE08` validation draft item without a current decision (SPEC-022).
 
