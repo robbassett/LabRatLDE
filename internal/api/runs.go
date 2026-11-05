@@ -87,10 +87,6 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		// A new run has none, but go through the one loader like the other responses.
-		if run.Signatures, err = loadSignatures(ctx, tx, run.ID); err != nil {
-			return err
-		}
 		if err := insertEdge(ctx, tx, p, domain.Edge{From: pv.NodeID, To: nodeID, Relation: domain.RelUsed}); err != nil {
 			return err
 		}
@@ -178,10 +174,10 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		}
 
 		rows, err = tx.Query(ctx, `
-			SELECT n.id, n.label, (a.payload::jsonb->>'count')::bigint, a.payload::jsonb->>'sha256'
+			SELECT n.id, n.label, `+datasetIngestColumns+`
 			FROM lineage_edges e
 			JOIN lineage_nodes n ON n.id = e.to_id
-			LEFT JOIN audit_events a ON a.entity_type = 'dataset' AND a.entity_id = n.id::text AND a.action = 'instrument.ingested'
+			`+datasetIngestJoin+`
 			WHERE e.from_id = $1 AND e.relation = 'wasGeneratedBy'
 			ORDER BY n.label`, detail.NodeID)
 		if err != nil {

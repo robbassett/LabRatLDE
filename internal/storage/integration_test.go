@@ -2404,15 +2404,17 @@ func TestSignatureChallengeRules(t *testing.T) {
 	wantCode(t, "lde_app truncates", exec(f.alice, `TRUNCATE signature_challenges`), "42501")
 
 	// Used once, by the principal it was issued to.
-	const use = `UPDATE signature_challenges SET used_at = now() WHERE id = $1`
+	const use = `UPDATE signature_challenges SET used_at = now(), login_at = now() WHERE id = $1`
 	wantCode(t, "bob uses alice's challenge", exec(f.bob, use, id), "LDE07")
+	// SPEC-023-R05
+	wantCode(t, "alice uses it without a login time", exec(f.alice, `UPDATE signature_challenges SET used_at = now() WHERE id = $1`, id), "LDE07")
 	wantCode(t, "alice uses it", exec(f.alice, use, id), "")
 	wantCode(t, "alice uses it again", exec(f.alice, use, id), "LDE03")
 	wantCode(t, "alice un-uses it", exec(f.alice, `UPDATE signature_challenges SET used_at = NULL WHERE id = $1`, id), "LDE03")
 
 	_, err = db.Pool.Exec(ctx, `DELETE FROM signature_challenges WHERE id = $1`, id)
 	wantCode(t, "owner deletes", err, "LDE03")
-	_, err = db.Pool.Exec(ctx, `TRUNCATE signature_challenges`)
+	_, err = db.Pool.Exec(ctx, `TRUNCATE signature_challenges, signatures`) // signatures references challenges, so a bare TRUNCATE hits 0A000 first
 	wantCode(t, "owner truncates", err, "LDE03")
 
 	// Another tenant can't see it.

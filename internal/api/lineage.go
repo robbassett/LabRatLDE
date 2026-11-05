@@ -12,6 +12,17 @@ import (
 
 // insertNode creates a lineage node and audits it.
 func insertNode(ctx context.Context, tx pgx.Tx, p Principal, kind domain.NodeKind, label string, attrs map[string]any) (string, error) {
+	id, err := insertNodeRow(ctx, tx, p, kind, label, attrs)
+	if err != nil {
+		return "", err
+	}
+	return id, auditNodeCreated(ctx, tx, p, id, kind, label, attrs)
+}
+
+// insertNodeRow creates a lineage node. The caller must audit it with
+// auditNodeCreated in the same transaction. It takes no chain lock, which is why
+// an upload uses it directly (SPEC-023-R02).
+func insertNodeRow(ctx context.Context, tx pgx.Tx, p Principal, kind domain.NodeKind, label string, attrs map[string]any) (string, error) {
 	if !kind.Valid() || label == "" {
 		return "", badRequest("lineage node needs a valid kind and a label")
 	}
@@ -25,11 +36,18 @@ func insertNode(ctx context.Context, tx pgx.Tx, p Principal, kind domain.NodeKin
 		p.Tenant, kind, label, attrs, p.Actor).Scan(&id); err != nil {
 		return "", err
 	}
+	return id, nil
+}
+
+func auditNodeCreated(ctx context.Context, tx pgx.Tx, p Principal, id string, kind domain.NodeKind, label string, attrs map[string]any) error {
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
 	_, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
 		Actor: p.Actor, Action: "lineage.node_created", EntityType: "lineage_node", EntityID: id,
 		Payload: map[string]any{"kind": kind, "label": label, "attrs": attrs},
 	})
-	return id, err
+	return err
 }
 
 // insertEdge links two nodes and audits it. The database trigger rejects

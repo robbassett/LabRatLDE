@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -116,7 +115,7 @@ func validateItems(items []changeItem) error {
 	}
 	for i, it := range items {
 		if err := it.validate(); err != nil {
-			return fmt.Errorf("item %d: %w", i, err)
+			return badRequest("item %d: %v", i, err) // fail prints only an httpError's own message
 		}
 	}
 	return nil
@@ -577,58 +576,9 @@ func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 			return
 		}
 		var cs changeSet
-		err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
-			cur, err := scanChangeSet(tx.QueryRow(ctx, `SELECT `+changeSetColumns+` FROM change_sets c WHERE c.id = $1 FOR UPDATE`, id))
-			if errors.Is(err, pgx.ErrNoRows) {
-				return notFound("change set")
-			} else if err != nil {
-				return err
-			}
-			if cur.State != "proposed" {
-				return &httpError{http.StatusConflict, "change set is " + cur.State}
-			}
-			if state == "committed" {
-				// The chain lock stops a signature landing after this check: signing
-				// takes it too, and whether a hash is needed depends on the signatures.
-				if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
-					return err
-				}
-				// The hash the reviewer read must be the items stored now.
-				var needsHash bool
-				if err := tx.QueryRow(ctx, `
-					SELECT EXISTS (SELECT 1 FROM change_set_touched_runs(c.tenant_id, c.items))
-					FROM change_sets c WHERE c.id = $1`, id).Scan(&needsHash); err != nil {
-					return err
-				}
-				if (needsHash || req.ItemsSHA256 != "") && req.ItemsSHA256 != cur.ItemsSHA256 {
-					return &httpError{http.StatusConflict, "items_sha256 must be the hash of the items you reviewed: read the change set again"}
-				}
-			}
-			row := tx.QueryRow(ctx, `
-				UPDATE change_sets AS c SET state = $2, decision_reason = $3
-				WHERE c.id = $1
-				RETURNING `+changeSetColumns, id, state, req.Reason)
-			cs, err = scanChangeSet(row)
-			if err != nil {
-				return err
-			}
-			if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
-				Actor: p.Actor, Action: "change_set." + state, EntityType: "change_set", EntityID: cs.ID, Reason: req.Reason,
-				Payload: map[string]any{"items_sha256": cs.ItemsSHA256, "items": len(cs.Items)},
-			}); err != nil {
-				return err
-			}
-			if state != "committed" {
-				return nil
-			}
-			// The change set's own reason, not the decision's, is what its
-			// revisions record. The UPDATE above and applyItems share tx, so
-			// the revision trigger sees this change set as committed here.
-			// Signatures go first: applying the items would fail on a sealed run.
-			if err := invalidateTouched(ctx, tx, p, cs.ID, cur.Reason); err != nil {
-				return err
-			}
-			return applyItems(ctx, tx, p, cs.ID, cur.Reason, cur.Items)
+		err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
+			cs, err = decide(ctx, tx, p, id, state, req.Reason, req.ItemsSHA256)
+			return err
 		})
 		if err != nil {
 			s.fail(w, r, err)
@@ -636,4 +586,66 @@ func (s *Server) decideChangeSet(state string) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, cs)
 	}
+}
+
+// decide moves a proposed change set to state and, on a commit, applies it.
+func decide(ctx context.Context, tx pgx.Tx, p Principal, id, state, reason, itemsSHA256 string) (changeSet, error) {
+	cur, err := scanChangeSet(tx.QueryRow(ctx, `SELECT `+changeSetColumns+` FROM change_sets c WHERE c.id = $1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return changeSet{}, notFound("change set")
+	} else if err != nil {
+		return changeSet{}, err
+	}
+	if cur.State != "proposed" {
+		return changeSet{}, &httpError{http.StatusConflict, "change set is " + cur.State}
+	}
+	if state == "committed" {
+		if err := checkReviewedHash(ctx, tx, p, cur, itemsSHA256); err != nil {
+			return changeSet{}, err
+		}
+	}
+	cs, err := scanChangeSet(tx.QueryRow(ctx, `
+		UPDATE change_sets AS c SET state = $2, decision_reason = $3
+		WHERE c.id = $1
+		RETURNING `+changeSetColumns, id, state, reason))
+	if err != nil {
+		return changeSet{}, err
+	}
+	if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
+		Actor: p.Actor, Action: "change_set." + state, EntityType: "change_set", EntityID: cs.ID, Reason: reason,
+		Payload: map[string]any{"items_sha256": cs.ItemsSHA256, "items": len(cs.Items)},
+	}); err != nil {
+		return changeSet{}, err
+	}
+	if state != "committed" {
+		return cs, nil
+	}
+	// The change set's own reason, not the decision's, is what its
+	// revisions record. The UPDATE above and applyItems share tx, so
+	// the revision trigger sees this change set as committed here.
+	// Signatures go first: applying the items would fail on a sealed run.
+	if err := invalidateTouched(ctx, tx, p, cs.ID, cur.Reason); err != nil {
+		return changeSet{}, err
+	}
+	return cs, applyItems(ctx, tx, p, cs.ID, cur.Reason, cur.Items)
+}
+
+// checkReviewedHash requires the hash the reviewer read to be the items stored
+// now, when a commit touches a run with valid signatures or the caller sent one.
+// The chain lock stops a signature landing after this check: signing takes it
+// too, and whether a hash is needed depends on the signatures.
+func checkReviewedHash(ctx context.Context, tx pgx.Tx, p Principal, cur changeSet, itemsSHA256 string) error {
+	if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+		return err
+	}
+	var needsHash bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM change_set_touched_runs(c.tenant_id, c.items))
+		FROM change_sets c WHERE c.id = $1`, cur.ID).Scan(&needsHash); err != nil {
+		return err
+	}
+	if (needsHash || itemsSHA256 != "") && itemsSHA256 != cur.ItemsSHA256 {
+		return &httpError{http.StatusConflict, "items_sha256 must be the hash of the items you reviewed: read the change set again"}
+	}
+	return nil
 }

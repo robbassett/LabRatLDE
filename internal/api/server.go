@@ -134,7 +134,9 @@ func (s *Server) uiConnectSrc() []string {
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Pool.Ping(r.Context()); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": err.Error()})
+		// This endpoint is public, and the error can name the database's host and user.
+		s.log.Error("health check failed", "err", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": "unavailable"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -198,6 +200,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return err // fail answers 413
+		}
 		return badRequest("invalid JSON body: %v", err)
 	}
 	return nil

@@ -56,11 +56,27 @@ type manifestNote struct {
 	BodySHA256 string `json:"body_sha256"`
 }
 
+// A dataset's reading count and SHA-256 come from its ingest audit event. In
+// these fragments, n is the dataset's lineage node.
+const (
+	datasetIngestColumns = `(a.payload::jsonb->>'count')::bigint, a.payload::jsonb->>'sha256'`
+	datasetIngestJoin    = `LEFT JOIN audit_events a ON a.entity_type = 'dataset' AND a.entity_id = n.id::text AND a.action = 'instrument.ingested'`
+)
+
+// queryAll reads every row into T, whose fields match the columns in order. It
+// never returns a nil slice, so an empty result stays an array in JSON.
+func queryAll[T any](ctx context.Context, tx pgx.Tx, query string, args ...any) ([]T, error) {
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[T])
+}
+
 // buildManifest renders the run's manifest as canonical JSON and returns its
 // text and lowercase-hex SHA-256. It reads only.
 func buildManifest(ctx context.Context, tx pgx.Tx, runID string) (text []byte, sha string, err error) {
-	m := manifest{Format: "labrat.run-manifest.v1", RunID: runID,
-		Inputs: []manifestInput{}, Datasets: []manifestDataset{}, Notes: []manifestNote{}}
+	m := manifest{Format: "labrat.run-manifest.v1", RunID: runID}
 	var nodeID string
 	err = tx.QueryRow(ctx, `
 		SELECT r.experiment_id, r.protocol_version_id, encode(pv.sha256, 'hex'), COALESCE(r.signed_from, r.state), r.node_id, r.params
@@ -77,56 +93,30 @@ func buildManifest(ctx context.Context, tx pgx.Tx, runID string) (text []byte, s
 		return nil, "", err
 	}
 
-	rows, err := tx.Query(ctx, `
+	if m.Inputs, err = queryAll[manifestInput](ctx, tx, `
 		SELECT n.id, COALESCE((SELECT max(rev) FROM record_revisions
 		                       WHERE entity_type = 'lineage_node' AND entity_id = n.id), 0)
 		FROM lineage_edges e
 		JOIN lineage_nodes n ON n.id = e.from_id
 		WHERE e.to_id = $1 AND e.relation = 'used' AND n.kind <> 'protocol'
-		ORDER BY n.id`, nodeID)
-	if err != nil {
-		return nil, "", err
-	}
-	for rows.Next() {
-		var in manifestInput
-		if err := rows.Scan(&in.NodeID, &in.Rev); err != nil {
-			rows.Close()
-			return nil, "", err
-		}
-		m.Inputs = append(m.Inputs, in)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		ORDER BY n.id`, nodeID); err != nil {
 		return nil, "", err
 	}
 
-	rows, err = tx.Query(ctx, `
+	if m.Datasets, err = queryAll[manifestDataset](ctx, tx, `
 		SELECT n.id, COALESCE((SELECT max(rev) FROM record_revisions
 		                       WHERE entity_type = 'lineage_node' AND entity_id = n.id), 0),
-		       (a.payload::jsonb->>'count')::bigint, a.payload::jsonb->>'sha256'
+		       `+datasetIngestColumns+`
 		FROM lineage_edges e
 		JOIN lineage_nodes n ON n.id = e.to_id
-		LEFT JOIN audit_events a ON a.entity_type = 'dataset' AND a.entity_id = n.id::text AND a.action = 'instrument.ingested'
+		`+datasetIngestJoin+`
 		WHERE e.from_id = $1 AND e.relation = 'wasGeneratedBy'
-		ORDER BY n.id`, nodeID)
-	if err != nil {
-		return nil, "", err
-	}
-	for rows.Next() {
-		var ds manifestDataset
-		if err := rows.Scan(&ds.NodeID, &ds.Rev, &ds.Count, &ds.SHA256); err != nil {
-			rows.Close()
-			return nil, "", err
-		}
-		m.Datasets = append(m.Datasets, ds)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		ORDER BY n.id`, nodeID); err != nil {
 		return nil, "", err
 	}
 
 	// Annotations are left out: they never alter the sealed record.
-	rows, err = tx.Query(ctx, `
+	if m.Notes, err = queryAll[manifestNote](ctx, tx, `
 		SELECT nt.id, nt.node_id,
 		       COALESCE((SELECT max(rev) FROM record_revisions WHERE entity_type = 'note' AND entity_id = nt.id), 0),
 		       encode(sha256(convert_to(nt.body, 'UTF8')), 'hex')
@@ -134,20 +124,7 @@ func buildManifest(ctx context.Context, tx pgx.Tx, runID string) (text []byte, s
 		WHERE NOT nt.annotation
 		  AND (nt.node_id = $1 OR nt.node_id IN
 		       (SELECT e.to_id FROM lineage_edges e WHERE e.from_id = $1 AND e.relation = 'wasGeneratedBy'))
-		ORDER BY nt.id`, nodeID)
-	if err != nil {
-		return nil, "", err
-	}
-	for rows.Next() {
-		var n manifestNote
-		if err := rows.Scan(&n.NoteID, &n.NodeID, &n.Rev, &n.BodySHA256); err != nil {
-			rows.Close()
-			return nil, "", err
-		}
-		m.Notes = append(m.Notes, n)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		ORDER BY nt.id`, nodeID); err != nil {
 		return nil, "", err
 	}
 
@@ -229,15 +206,25 @@ func loadSignatures(ctx context.Context, tx pgx.Tx, runID string) ([]domain.Sign
 	return byRun[runID], nil
 }
 
+// selectSignature reads signatures for scanSignature; callers add the WHERE.
+const selectSignature = `
+	SELECT s.entity_id::text, s.id, s.step, s.meaning, p.handle, s.printed_name, s.signed_at, encode(s.manifest_sha256, 'hex'),
+	       s.comment, s.reauth_method, s.invalidated_at IS NULL, s.invalidated_at, s.invalidated_by_change_set::text, cs.reason
+	FROM signatures s
+	JOIN principals p ON p.id = s.signer_id
+	LEFT JOIN change_sets cs ON cs.id = s.invalidated_by_change_set`
+
+// scanSignature reads one row of selectSignature, and the run it belongs to.
+func scanSignature(row pgx.Row) (runID string, s domain.Signature, err error) {
+	err = row.Scan(&runID, &s.ID, &s.Step, &s.Meaning, &s.Signer, &s.PrintedName, &s.SignedAt, &s.ManifestSHA256,
+		&s.Comment, &s.ReauthMethod, &s.Valid, &s.InvalidatedAt, &s.InvalidatedByChangeSet, &s.InvalidatedReason)
+	return runID, s, err
+}
+
 // loadSignaturesFor reads the signatures of several runs in one query, oldest
 // first. Every run id in runIDs has an entry, never nil.
 func loadSignaturesFor(ctx context.Context, tx pgx.Tx, runIDs []string) (map[string][]domain.Signature, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT s.entity_id::text, s.id, s.step, s.meaning, p.handle, s.printed_name, s.signed_at, encode(s.manifest_sha256, 'hex'),
-		       s.comment, s.reauth_method, s.invalidated_at IS NULL, s.invalidated_at, s.invalidated_by_change_set::text, cs.reason
-		FROM signatures s
-		JOIN principals p ON p.id = s.signer_id
-		LEFT JOIN change_sets cs ON cs.id = s.invalidated_by_change_set
+	rows, err := tx.Query(ctx, selectSignature+`
 		WHERE s.entity_type = 'run' AND s.entity_id = ANY($1::uuid[])
 		ORDER BY s.signed_at, s.id`, runIDs)
 	if err != nil {
@@ -249,10 +236,8 @@ func loadSignaturesFor(ctx context.Context, tx pgx.Tx, runIDs []string) (map[str
 		out[id] = []domain.Signature{}
 	}
 	for rows.Next() {
-		var runID string
-		var s domain.Signature
-		if err := rows.Scan(&runID, &s.ID, &s.Step, &s.Meaning, &s.Signer, &s.PrintedName, &s.SignedAt, &s.ManifestSHA256,
-			&s.Comment, &s.ReauthMethod, &s.Valid, &s.InvalidatedAt, &s.InvalidatedByChangeSet, &s.InvalidatedReason); err != nil {
+		runID, s, err := scanSignature(rows)
+		if err != nil {
 			return nil, err
 		}
 		out[runID] = append(out[runID], s)
@@ -268,67 +253,87 @@ const maxAuthTimeSkew = 60 * time.Second
 // happened, for clock skew between the IdP and the database.
 const maxChallengeSkew = 5 * time.Second
 
-// checkReauth proves the signer logged in for this signature (SPEC-008-R04). In
-// prod the ID token must come from the issuer, for the UI client and the
-// caller's own subject. Its nonce must name an unused, unexpired challenge
-// issued to the caller for this run and manifest, and its auth_time must not be
-// earlier than that challenge: a recent login made for something else doesn't
-// count. In dev no token is needed. It writes nothing. It returns when the login
-// happened, how it was proved, and the challenge to use up ("" in dev).
-func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, runID, sha, token string) (time.Time, string, string, error) {
+// errLoginNotRecent is every way a token can fail to prove a login for this
+// signature, so a caller learns nothing about which check failed.
+var errLoginNotRecent = unauthorized("log in again to sign: your login is not recent enough")
+
+// loginToken is what a verified ID token says about a login.
+type loginToken struct {
+	issuer, subject, nonce string
+	authTime               time.Time
+}
+
+// verifyReauth checks the ID token's signature, issuer, audience and expiry
+// (SPEC-008-R04). It can reach the IdP for its keys, so it runs before the
+// signing transaction opens (SPEC-023-R09). In dev no token is needed.
+func (s *Server) verifyReauth(ctx context.Context, token string) (loginToken, error) {
 	if s.cfg.Env != "prod" {
-		var now time.Time
-		err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now)
-		return now, "dev", "", err
+		return loginToken{}, nil
 	}
 	if s.reauth == nil {
-		return time.Time{}, "", "", &httpError{http.StatusNotImplemented, "signing needs LDE_OIDC_UI_CLIENT_ID to be configured"}
+		return loginToken{}, &httpError{http.StatusNotImplemented, "signing needs LDE_OIDC_UI_CLIENT_ID to be configured"}
 	}
 	if token == "" {
-		return time.Time{}, "", "", unauthorized("reauth_token is required")
+		return loginToken{}, unauthorized("reauth_token is required")
 	}
 	tok, err := s.reauth.Verify(ctx, token)
 	if err != nil {
 		s.log.Info("reauth token rejected", "err", err)
-		return time.Time{}, "", "", unauthorized("invalid reauth_token")
+		return loginToken{}, unauthorized("invalid reauth_token")
 	}
 	var claims struct {
 		AuthTime *int64 `json:"auth_time"`
 	}
 	if err := tok.Claims(&claims); err != nil || claims.AuthTime == nil {
-		return time.Time{}, "", "", unauthorized("reauth_token has no auth_time")
+		return loginToken{}, unauthorized("reauth_token has no auth_time")
+	}
+	return loginToken{issuer: tok.Issuer, subject: tok.Subject, nonce: tok.Nonce, authTime: time.Unix(*claims.AuthTime, 0)}, nil
+}
+
+// reauth is how a signature's login was proved.
+type reauth struct {
+	at        time.Time // when the login happened
+	method    string    // "oidc" or "dev"
+	challenge string    // the challenge to use up; "" in dev
+}
+
+// checkReauth proves the signer logged in for this signature (SPEC-008-R04). In
+// prod the token must be for the caller's own subject. Its nonce must name an
+// unused, unexpired challenge issued to the caller for this run and manifest,
+// and its auth_time must not be earlier than that challenge: a recent login made
+// for something else doesn't count. It writes nothing.
+func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, runID, sha string, tok loginToken) (reauth, error) {
+	if s.cfg.Env != "prod" {
+		r := reauth{method: "dev"}
+		err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&r.at)
+		return r, err
 	}
 	var issuer, subject string
 	if err := tx.QueryRow(ctx, `SELECT issuer, subject FROM principals WHERE id = $1`, p.As.ID).Scan(&issuer, &subject); err != nil {
-		return time.Time{}, "", "", err
+		return reauth{}, err
 	}
-	if tok.Issuer != issuer || tok.Subject != subject {
-		return time.Time{}, "", "", unauthorized("reauth_token is for someone else")
+	if tok.issuer != issuer || tok.subject != subject {
+		return reauth{}, unauthorized("reauth_token is for someone else")
 	}
-	notRecent := unauthorized("log in again to sign: your login is not recent enough")
-	at := time.Unix(*claims.AuthTime, 0)
-	age := time.Since(at)
-	if age > s.cfg.SignReauthMaxAge || age < -maxAuthTimeSkew {
-		return time.Time{}, "", "", notRecent
-	}
-	if !validUUID(tok.Nonce) {
-		return time.Time{}, "", "", notRecent
+	age := time.Since(tok.authTime)
+	if age > s.cfg.SignReauthMaxAge || age < -maxAuthTimeSkew || !validUUID(tok.nonce) {
+		return reauth{}, errLoginNotRecent
 	}
 	var issued time.Time
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT created_at FROM signature_challenges
 		WHERE id = $1 AND principal_id = $2 AND run_id = $3 AND manifest_sha256 = $4 AND used_at IS NULL
 		  AND clock_timestamp() - created_at <= make_interval(secs => $5)`,
-		tok.Nonce, p.As.ID, runID, sha, s.cfg.SignReauthMaxAge.Seconds()).Scan(&issued)
+		tok.nonce, p.As.ID, runID, sha, s.cfg.SignReauthMaxAge.Seconds()).Scan(&issued)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, "", "", notRecent
+		return reauth{}, errLoginNotRecent
 	} else if err != nil {
-		return time.Time{}, "", "", err
+		return reauth{}, err
 	}
-	if at.Add(maxChallengeSkew).Before(issued) {
-		return time.Time{}, "", "", notRecent
+	if tok.authTime.Add(maxChallengeSkew).Before(issued) {
+		return reauth{}, errLoginNotRecent
 	}
-	return at, "oidc", tok.Nonce, nil
+	return reauth{at: tok.authTime, method: "oidc", challenge: tok.nonce}, nil
 }
 
 var sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -394,123 +399,156 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, notFound("run"))
 		return
 	}
-	var req struct {
-		Step           int    `json:"step"`
-		Meaning        string `json:"meaning"`
-		ManifestSHA256 string `json:"manifest_sha256"`
-		Comment        string `json:"comment"`
-		ReauthToken    string `json:"reauth_token"`
-	}
+	var req signRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if strings.TrimSpace(req.Meaning) == "" {
-		s.fail(w, r, badRequest("meaning is required"))
+	if err := req.check(); err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	if req.Step < 1 {
-		s.fail(w, r, badRequest("step must be 1 or more"))
+	tok, err := s.verifyReauth(ctx, req.ReauthToken)
+	if err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	if !sha256HexRE.MatchString(req.ManifestSHA256) {
-		s.fail(w, r, badRequest("manifest_sha256 must be 64 lowercase hex characters"))
-		return
-	}
-	var comment *string
-	if req.Comment != "" {
-		comment = &req.Comment
-	}
-
 	var out domain.Signature
-	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
-		reauthAt, method, challenge, err := s.checkReauth(ctx, tx, p, id, req.ManifestSHA256, req.ReauthToken)
-		if err != nil {
-			return err
-		}
-		// The chain lock comes before the run lock: edits take them in this
-		// order, and the opposite order deadlocks.
-		if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
-			return err
-		}
-		var from domain.RunState
-		if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1 FOR UPDATE`, id).Scan(&from); err != nil {
-			return err
-		}
-		text, sha, err := buildManifest(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if sha != req.ManifestSHA256 {
-			return &httpError{http.StatusConflict, "the record changed since you viewed it: review the new manifest and sign again"}
-		}
-		// One challenge and one login prove one signature. Requests racing on either
-		// serialise on the chain lock, so the second finds the challenge used or hits
-		// the unique index on the login. The login is the token's auth_time as sent:
-		// reauth_at below may be clamped, and so can't identify it.
-		if challenge != "" {
-			spent := unauthorized("log in again to sign: your login is not recent enough")
-			tag, err := tx.Exec(ctx, `UPDATE signature_challenges SET used_at = now(), login_at = $2 WHERE id = $1 AND used_at IS NULL`, challenge, reauthAt)
-			if storage.ErrorCode(err) == "23505" {
-				return spent
-			}
-			if err != nil {
-				return err
-			}
-			if tag.RowsAffected() != 1 {
-				return spent
-			}
-		}
-		var manifestID string
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO signature_manifests (tenant_id, run_id, manifest) VALUES ($1, $2, $3) RETURNING id`,
-			p.Tenant, id, string(text)).Scan(&manifestID); err != nil {
-			return err
-		}
-		// The database stamps signer, printed name and time; these are placeholders.
-		var sigID string
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id, printed_name, signed_at,
-			                        manifest_id, manifest_sha256, comment, reauth_at, reauth_method)
-			VALUES ($1, 'run', $2, $3, $4, $5, '', now(), $6, decode($7, 'hex'), $8, LEAST($9::timestamptz, clock_timestamp()), $10)
-			RETURNING id`,
-			p.Tenant, id, req.Step, req.Meaning, p.As.ID, manifestID, sha, comment, reauthAt, method).Scan(&sigID); err != nil {
-			return err
-		}
-		if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
-			Actor: p.Actor, Action: "signature.applied", EntityType: "signature", EntityID: sigID, Reason: req.Meaning,
-			Payload: map[string]any{"run_id": id, "step": req.Step, "manifest_sha256": sha, "comment": comment, "reauth_challenge": challenge},
-		}); err != nil {
-			return err
-		}
-		var to domain.RunState
-		if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1`, id).Scan(&to); err != nil {
-			return err
-		}
-		if to == domain.RunSigned {
-			if _, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
-				Actor: p.Actor, Action: "run.signed", EntityType: "run", EntityID: id, Reason: req.Meaning,
-				Payload: map[string]any{"from": from, "to": to},
-			}); err != nil {
-				return err
-			}
-		}
-		sigs, err := loadSignatures(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		for _, sg := range sigs {
-			if sg.ID == sigID {
-				out = sg
-			}
-		}
-		return nil
+	err = s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
+		out, err = s.applySignature(ctx, tx, p, id, req, tok)
+		return err
 	})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// signRequest is the body of POST /v1/runs/{id}/signatures.
+type signRequest struct {
+	Step           int    `json:"step"`
+	Meaning        string `json:"meaning"`
+	ManifestSHA256 string `json:"manifest_sha256"`
+	Comment        string `json:"comment"`
+	ReauthToken    string `json:"reauth_token"`
+}
+
+func (req signRequest) check() error {
+	if strings.TrimSpace(req.Meaning) == "" {
+		return badRequest("meaning is required")
+	}
+	if req.Step < 1 {
+		return badRequest("step must be 1 or more")
+	}
+	if !sha256HexRE.MatchString(req.ManifestSHA256) {
+		return badRequest("manifest_sha256 must be 64 lowercase hex characters")
+	}
+	return nil
+}
+
+// applySignature signs run id if its manifest is still the one the signer saw.
+func (s *Server) applySignature(ctx context.Context, tx pgx.Tx, p Principal, id string, req signRequest, tok loginToken) (domain.Signature, error) {
+	var none domain.Signature
+	login, err := s.checkReauth(ctx, tx, p, id, req.ManifestSHA256, tok)
+	if err != nil {
+		return none, err
+	}
+	// The chain lock comes before the run lock: edits take them in this
+	// order, and the opposite order deadlocks.
+	if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+		return none, err
+	}
+	var from domain.RunState
+	if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1 FOR UPDATE`, id).Scan(&from); err != nil {
+		return none, err
+	}
+	text, sha, err := buildManifest(ctx, tx, id)
+	if err != nil {
+		return none, err
+	}
+	if sha != req.ManifestSHA256 {
+		return none, &httpError{http.StatusConflict, "the record changed since you viewed it: review the new manifest and sign again"}
+	}
+	if err := spendChallenge(ctx, tx, login); err != nil {
+		return none, err
+	}
+	sigID, err := insertSignature(ctx, tx, p, id, req, string(text), sha, login)
+	if err != nil {
+		return none, err
+	}
+	if err := auditIfSigned(ctx, tx, p, id, req.Meaning, from); err != nil {
+		return none, err
+	}
+	_, out, err := scanSignature(tx.QueryRow(ctx, selectSignature+` WHERE s.id = $1`, sigID))
+	return out, err
+}
+
+// spendChallenge uses up the login's challenge. One challenge and one login prove
+// one signature. Requests racing on either serialise on the chain lock, so the
+// second finds the challenge used or hits the unique index on the login. The
+// login is the token's auth_time as sent: reauth_at may be clamped, and so can't
+// identify it.
+func spendChallenge(ctx context.Context, tx pgx.Tx, login reauth) error {
+	if login.challenge == "" {
+		return nil
+	}
+	tag, err := tx.Exec(ctx, `UPDATE signature_challenges SET used_at = now(), login_at = $2 WHERE id = $1 AND used_at IS NULL`, login.challenge, login.at)
+	if storage.ErrorCode(err) == "23505" {
+		return errLoginNotRecent
+	}
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errLoginNotRecent
+	}
+	return nil
+}
+
+// insertSignature stores the manifest and the signature, audited. The database
+// stamps signer, printed name and time, so those values are placeholders.
+func insertSignature(ctx context.Context, tx pgx.Tx, p Principal, id string, req signRequest, text, sha string, login reauth) (string, error) {
+	var comment *string
+	if req.Comment != "" {
+		comment = &req.Comment
+	}
+	var manifestID, sigID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO signature_manifests (tenant_id, run_id, manifest) VALUES ($1, $2, $3) RETURNING id`,
+		p.Tenant, id, text).Scan(&manifestID); err != nil {
+		return "", err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id, printed_name, signed_at,
+		                        manifest_id, manifest_sha256, comment, reauth_at, reauth_method, challenge_id)
+		VALUES ($1, 'run', $2, $3, $4, $5, '', now(), $6, decode($7, 'hex'), $8, LEAST($9::timestamptz, clock_timestamp()), $10, NULLIF($11, '')::uuid)
+		RETURNING id`,
+		p.Tenant, id, req.Step, req.Meaning, p.As.ID, manifestID, sha, comment, login.at, login.method, login.challenge).Scan(&sigID); err != nil {
+		return "", err
+	}
+	_, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
+		Actor: p.Actor, Action: "signature.applied", EntityType: "signature", EntityID: sigID, Reason: req.Meaning,
+		Payload: map[string]any{"run_id": id, "step": req.Step, "manifest_sha256": sha, "comment": comment, "reauth_challenge": login.challenge},
+	})
+	return sigID, err
+}
+
+// auditIfSigned records run.signed when the trigger on signatures has just moved
+// the run to signed: the last policy step was filled.
+func auditIfSigned(ctx context.Context, tx pgx.Tx, p Principal, id, meaning string, from domain.RunState) error {
+	var to domain.RunState
+	if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1`, id).Scan(&to); err != nil {
+		return err
+	}
+	if to != domain.RunSigned {
+		return nil
+	}
+	_, err := audit.Append(ctx, tx, p.Tenant, audit.Entry{
+		Actor: p.Actor, Action: "run.signed", EntityType: "run", EntityID: id, Reason: meaning,
+		Payload: map[string]any{"from": from, "to": to},
+	})
+	return err
 }
 
 // invalidateTouched marks every valid signature of the runs change set csID
