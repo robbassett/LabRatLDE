@@ -518,11 +518,11 @@ Stop the dev server and follow section 1.3 (prod server, `tokens`, bootstrap, pe
 - **As:** IdP administrator and QA, with a developer
 - **Why:** the re-authentication check accepts an ID token only when it has a recent `auth_time`. Entra ID and Okta are the target IdPs and this has not been proven on either. If either fails, every signature on that IdP is refused with `401`, or the form never shows, so users are not asked to prove themselves.
 - **Steps (repeat once per IdP, and once on the local Keycloak as a control):**
-  1. Register the LabRat UI client and API as in `docs/identity.md` (public client, PKCE, redirect URI = the LabRat host). Enable `auth_time` as a claim of the UI client's ID token if the IdP needs it switched on (optional claims). Start LabRat in prod against it with `LDE_OIDC_UI_CLIENT_ID` set.
+  1. For Entra ID, follow **UAT-19 on Entra ID: step by step** below in place of this step. Otherwise, register the LabRat UI client and API as in `docs/identity.md` (public client, PKCE, redirect URI = the LabRat host). Enable `auth_time` as a claim of the UI client's ID token if the IdP needs it switched on (optional claims). Start LabRat in prod against it with `LDE_OIDC_UI_CLIENT_ID` set.
   2. Sign in to LabRat as a test user and stay signed in (so the IdP has a live session).
   3. Open a completed run, click Sign, tick the box, click Sign.
   4. Watch the browser: does the IdP show its login form (username or password, or MFA), even though the session is live? Capture the authorization request URL: it must have `prompt=login` and `max_age=0`.
-  5. Complete the login. In the browser's Network tab, find the request to `/v1/runs/<id>/signatures` and copy `reauth_token` from its body. Decode its middle part locally (`cut -d. -f2 | base64 -d`); do not paste it into a public website.
+  5. Complete the login. In the browser's Network tab, find the request to `/v1/runs/<id>/signatures` and copy `reauth_token` from its body. Decode it locally with the `claims` helper in the Entra ID walkthrough below (tokens are base64url, so plain `base64 -d` can fail); do not paste it into a public website.
   6. Check the claims: `iss` is the configured issuer, `aud` is the UI client id, `sub` is the signer's, `auth_time` is present and is the time of this login, within about a minute of now, and `nonce` is present and equals the `nonce` in the authorization request URL from step 4.
   7. Check the signature was recorded: `GET /v1/runs/<id>/signatures` has `reauth_method: "oidc"`.
   8. Negative: wait longer than `LDE_SIGN_REAUTH_MAX_AGE` (2 minutes) at the login form, then log in; the signature must be refused with `401`.
@@ -531,6 +531,119 @@ Stop the dev server and follow section 1.3 (prod server, `tokens`, bootstrap, pe
 - **Result (Entra ID):** Pass / Fail · Notes:
 - **Result (Okta):** Pass / Fail · Notes:
 - **Result (Keycloak control):** Pass / Fail · Notes:
+
+#### UAT-19 on Entra ID: step by step
+
+This uses a free Entra tenant and a LabRat server on your own machine. It needs no client secret. It has not been run yet, so if a portal label has moved or a step fails, record what you saw.
+
+Two choices differ from a general reading of `docs/identity.md`, and both are deliberate:
+
+- **One app registration for both the UI and the API.** Entra gives the same user a different `sub` for each application. LabRat finds the signer from the access token's `sub` and requires the ID token's `sub` to match, so with two registrations every signature would be refused as "for someone else".
+- **`tid` as the tenant claim.** Entra already puts its tenant ID, a UUID, in the token when the `profile` scope is requested. The LabRat tenant simply uses the same UUID, so no custom claim is needed.
+
+**A. Set up Entra.** In the [Microsoft Entra admin center](https://entra.microsoft.com):
+
+1. On **Entra ID** > **Overview**, copy the **Tenant ID**.
+2. Create a test user: **Entra ID** > **Users** > **New user** > **Create new user**. Use a synthetic name such as `labrat-alice`, and copy the user principal name and password. Don't test with your own Azure sign-in, which is usually a guest in this tenant. The first login asks for a new password, and security defaults may ask you to set up MFA.
+3. Register the app: **Entra ID** > **App registrations** > **New registration**.
+   - Name: `LabRat UAT`.
+   - Supported account types: this organizational directory only (single tenant).
+   - Redirect URI: platform **Single-page application (SPA)**, value exactly `http://localhost:8090/`, with the trailing slash. Use `localhost`, not `127.0.0.1`. If port 8090 is taken, choose another and use it everywhere below.
+   - Click **Register**, then copy the **Application (client) ID**.
+4. Don't tick the implicit grant boxes, and don't create a client secret.
+5. Expose the API: open **Expose an API**.
+   - Next to **Application ID URI**, click **Add** and accept `api://<client id>`.
+   - Click **Add a scope**. Scope name `access`, who can consent **Admins and users**, any display names and descriptions, state **Enabled**.
+6. Ask for v2 access tokens: open **Manifest**, find `requestedAccessTokenVersion` under `api`, set it to `2`, and click **Save**. It starts as `null`, which gives v1 tokens that LabRat rejects. (The older manifest format calls it `accessTokenAcceptedVersion`.)
+7. Turn on `auth_time`: open **Token configuration** > **Add optional claim**, choose token type **ID**, tick `auth_time`, and click **Add**.
+
+**B. Start LabRat against it.** Use a new Git Bash terminal, without `uat.env` sourced. Run `make ui` first if you haven't built the UI on this checkout. Using a database of its own keeps this away from your other UAT data.
+
+```bash
+export ENTRA_TENANT=<tenant id, lowercase>
+export ENTRA_CLIENT=<application (client) id>
+export LAB=http://localhost:8090
+export LDE_ENV=prod
+export LDE_HTTP_ADDR=:8090
+export LDE_DATABASE_URL='postgres://lde:lde@localhost:5432/lde_entra?sslmode=disable'
+export LDE_OIDC_ISSUER="https://login.microsoftonline.com/$ENTRA_TENANT/v2.0"
+export LDE_OIDC_AUDIENCE=$ENTRA_CLIENT
+export LDE_OIDC_UI_CLIENT_ID=$ENTRA_CLIENT
+export LDE_OIDC_TENANT_CLAIM=tid
+export LDE_OIDC_UI_SCOPES="openid profile email api://$ENTRA_CLIENT/access"
+
+docker compose exec -T postgres psql -U lde -d postgres -c 'CREATE DATABASE lde_entra'
+go run ./cmd/server      # first log line says "env":"prod"; a later line says "oidc ready"
+```
+
+In a second terminal, run the same `export` lines (skip the database and server commands) and define these helpers:
+
+```bash
+claims() { # paste a token at the prompt; prints its claims. Nothing leaves your machine.
+  local t; read -rsp 'Token: ' t; echo
+  printf %s "$t" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(JSON.parse(Buffer.from(s.trim().split(".")[1],"base64url")),null,1)))'
+}
+api() { # api METHOD PATH [JSON] -> "body [STATUS]"; uses $TOKEN
+  curl -s -w ' [%{http_code}]\n' -X "$1" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"} "$LAB$2"
+}
+field() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+```
+
+**C. Find the test user's `sub`, and create them in LabRat.**
+
+1. Open a new private browser window, press F12, open the **Network** tab and tick **Preserve log**. Go to `http://localhost:8090/` and sign in as the test user. Accept the permissions prompt if one appears.
+2. LabRat should now say there is no principal for this identity (`403`). That is expected: they don't exist in LabRat yet.
+3. In the Network tab, click the `POST` request named `token` and open **Response**. Copy the value of `access_token`, run `claims` and paste it. Check: `ver` is `2.0`, `iss` equals `$LDE_OIDC_ISSUER`, `aud` equals `$ENTRA_CLIENT`, `tid` equals `$ENTRA_TENANT`. Note `sub`.
+4. Do the same with `id_token` from that response. Check: `aud` equals `$ENTRA_CLIENT`, **`sub` is identical to the access token's**, and `auth_time` is present. If any of this differs, stop and see the table below.
+5. Create the user. This runs as the database owner. Copy the id it prints:
+
+```bash
+export ENTRA_SUB=<sub from step 3>
+go run ./cmd/server bootstrap-admin --tenant $ENTRA_TENANT --slug entra-uat --name "Entra UAT" \
+  --issuer "$LDE_OIDC_ISSUER" --subject "$ENTRA_SUB" --handle alice --display-name "Alice Test" --email alice@lab.test
+export ALICE=<id it printed>
+```
+
+6. Reload the browser page: you should now be signed in as `alice`.
+7. Give them the role that signs step 1, and make two finished runs. Copy `TOKEN` from the same `access_token`, or from the `Authorization` header of any `/v1/` request, without the word `Bearer`:
+
+```bash
+read -rsp 'Token: ' TOKEN; echo
+api POST /v1/role-grants "{\"principal_id\":\"$ALICE\",\"role\":\"scientist\",\"reason\":\"UAT-19\"}"   # [201]
+EXP=$(api POST /v1/experiments '{"slug":"entra-qpcr","title":"Entra qPCR (synthetic)","protocol_md":"---\nprotocol: qpcr\nversion: 1\n---\n\n# Steps\n1. Plate triplicates.\n"}' | field id)
+mk() { local id; id=$(api POST /v1/runs "{\"experiment_id\":\"$EXP\",\"label\":\"$1\",\"params\":{\"cycles\":40}}" | field id)
+  api POST /v1/runs/$id/transitions '{"to":"running"}' >/dev/null
+  api POST /v1/runs/$id/transitions '{"to":"completed"}' >/dev/null; echo $id; }
+RUN_A=$(mk "Entra A"); RUN_B=$(mk "Entra B"); echo "EXP=$EXP RUN_A=$RUN_A RUN_B=$RUN_B"
+```
+
+Every id must be non-empty. Two runs are needed because one person can't sign the same run twice.
+
+**D. Run the test (steps 2 to 9 above).** Keep the browser window from step C, still signed in, with **Preserve log** ticked.
+
+1. In the explorer, open experiment `entra-qpcr`, then run `Entra A`. Click **Sign**, tick the box, and click **Sign**.
+2. *Step 4:* Entra must ask for the password, even though you are signed in. Record whether it also asks for MFA. In the Network tab, filter on `authorize` and copy the newest request's URL: it must contain `prompt=login`, `max_age=0` and `nonce=`. Note the `nonce`. Microsoft documents `prompt=login` as what forces the login, so don't count this as a pass on `max_age` alone.
+3. Enter the password. LabRat returns and applies the signature.
+4. *Steps 5 and 6:* filter on `signatures`, click the `POST`, open **Payload** and copy `reauth_token`. Run `claims` and paste it. Check `iss` equals `$LDE_OIDC_ISSUER`, `aud` equals `$ENTRA_CLIENT`, `sub` equals `$ENTRA_SUB`, `nonce` equals the one you noted, and `auth_time` is within about a minute of `date +%s`. Record the difference.
+5. *Step 7:* `api GET /v1/runs/$RUN_A/signatures` must show `"reauth_method":"oidc"`, with `[200]`.
+6. *Step 8:* open run `Entra B`, click **Sign**, tick the box and click **Sign**. **Wait 2 minutes 30 seconds on the Entra password page**, then log in. LabRat must refuse with `log in again to sign: your login is not recent enough` (`401` on the `signatures` request). The login itself is fresh, so this is the expired challenge being refused. `api GET /v1/runs/$RUN_B/signatures` must show no signatures.
+7. *Step 9:* record the tenant ID, the date, and the results above under **Result (Entra ID)**. Don't paste tokens into the plan.
+
+**If something goes wrong:**
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| `AADSTS50011` (redirect URI mismatch) | The URL isn't exactly the registered one | Use `http://localhost:8090/` for both, including the trailing slash |
+| `AADSTS9002326` (cross-origin token redemption), or `Sign-in failed: the identity provider returned 400` | The redirect URI is under **Web**, not **SPA** | A.3: move it to the SPA platform |
+| "Need admin approval", or `AADSTS65001` | The user can't consent to the scope | A.5: check **Admins and users**, then have an admin grant consent under **API permissions** |
+| Server log says `bearer token rejected`, or the UI shows `401` right after sign-in | The access token has `ver` `1.0` or `iss` of `sts.windows.net`, or the wrong `aud` | A.6, and check `LDE_OIDC_AUDIENCE` is the client ID. Sign out and in again for a new token |
+| `token has no valid tid claim` | No `tid` in the access token | Check `profile` is in `LDE_OIDC_UI_SCOPES` and `LDE_OIDC_TENANT_CLAIM=tid` |
+| `no enabled principal for this identity` after step C.5 | `sub` or issuer doesn't match the access token, or `--tenant` isn't the `tid` | Compare them with the `claims` output. They must match exactly |
+| `reauth_token is for someone else` | Signed in as another user at the forced login, or two app registrations | Use the same user; use one registration |
+| `reauth_token has no auth_time` | The optional claim isn't on the ID token | A.7. **Record this as a finding**: if it's still missing, re-authentication doesn't work on Entra |
+| `not recent enough` on a quick login | Clock difference, or the `nonce` is missing from the ID token | Record the token's `auth_time` and `nonce` against `date +%s` |
+
+Afterwards: stop the server, and delete the app registration and test user if you no longer need them. To remove the database: `docker compose exec -T postgres psql -U lde -d postgres -c 'DROP DATABASE lde_entra'`.
 
 ## 3. Traceability
 
