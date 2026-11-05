@@ -1,6 +1,6 @@
 # Local development stack.
 #
-#   docker compose up -d                  # Postgres; run the server with `go run ./cmd/server`
+#   docker compose up -d                  # Postgres; run the server with `make run`
 #   docker compose --profile full up -d   # ...and the containerised server too
 #   docker compose --profile idp up -d    # a local Keycloak for LDE_ENV=prod (tools/keycloak/README.md)
 #
@@ -29,6 +29,7 @@ services:
     profiles: ["full"]
     build: .
     environment:
+      LDE_ENV: dev
       LDE_DATABASE_URL: postgres://lde:lde@postgres:5432/lde?sslmode=disable
     ports:
       - "8080:8080"

@@ -226,7 +226,7 @@ liquid handlers, and whatever your automation cell emits next.
 git clone https://github.com/Accelerate-Biotech/LabRatLDE.git
 cd LabRatLDE
 docker compose up -d                 # PostgreSQL 16
-go run cmd/server/main.go            # migrates, seeds a dev tenant, listens on :8080
+LDE_ENV=dev go run ./cmd/server      # migrates, seeds a dev tenant, listens on :8080
 ```
 
 ```bash
@@ -303,7 +303,7 @@ A binary built without `make ui` serves a "UI not built" page at `/`; the API ke
 ### Traceability report and install checks
 
 ```bash
-go run ./cmd/server iq                      # IQ: migrations, RLS, integrity triggers, lde_app role and TEMP privilege, binary SHA-256
+LDE_ENV=dev go run ./cmd/server iq          # IQ: migrations, RLS, integrity triggers, lde_app role and TEMP privilege, binary SHA-256
 make validate OPERATOR="J. Doe"             # full suite against the database -> traceability report in validation/<timestamp>/
 cd validation/<timestamp> && sha256sum -c report.sha256
 ```

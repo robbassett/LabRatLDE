@@ -1,6 +1,7 @@
 // Package config loads runtime configuration from the environment
-// (twelve-factor). Every setting has a dev-friendly default so that
-// `docker compose up -d && go run ./cmd/server` works with zero setup.
+// (twelve-factor). Every setting but LDE_ENV has a dev-friendly default. LDE_ENV
+// has none, because dev trusts request headers for identity, and a server must
+// never fall into that by accident (SPEC-023-R03).
 package config
 
 import (
@@ -37,7 +38,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	c := Config{
-		Env:             env("LDE_ENV", "dev"),
+		Env:             env("LDE_ENV", ""),
 		HTTPAddr:        env("LDE_HTTP_ADDR", ":8080"),
 		DatabaseURL:     env("LDE_DATABASE_URL", "postgres://lde:lde@localhost:5432/lde?sslmode=disable"),
 		OIDCIssuer:      env("LDE_OIDC_ISSUER", ""),
@@ -45,6 +46,9 @@ func Load() (Config, error) {
 		OIDCTenantClaim: env("LDE_OIDC_TENANT_CLAIM", "lde_tenant"),
 		OIDCUIClientID:  env("LDE_OIDC_UI_CLIENT_ID", ""),
 		OIDCUIScopes:    env("LDE_OIDC_UI_SCOPES", "openid profile email"),
+	}
+	if c.Env == "" {
+		return c, fmt.Errorf("config: LDE_ENV is required: set it to dev or prod")
 	}
 	var err error
 	if c.AutoMigrate, err = strconv.ParseBool(env("LDE_AUTO_MIGRATE", "true")); err != nil {

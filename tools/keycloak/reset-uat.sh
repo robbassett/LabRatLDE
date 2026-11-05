@@ -60,7 +60,7 @@ Fresh. In each terminal you use for the UAT:
 
   . tools/keycloak/uat.env      # sets LDE_DATABASE_URL, LAB, T1, T2, ISSUER, SUB_*; adds tok, tokens, prod_env
 
-Part A (dev):   go run ./cmd/server
+Part A (dev):   LDE_ENV=dev go run ./cmd/server
 Part B (prod):  prod_env && go run ./cmd/server     then, in the helper terminal: tokens
 
 Open http://localhost:8080/ in a NEW private window. The tenant has no principals yet;

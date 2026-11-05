@@ -79,4 +79,4 @@ End a delegation with `POST /v1/agent-delegations/{id}/end {reason}`.
 
 ## Development mode
 
-With `LDE_ENV=dev` (the default), the server trusts `X-LDE-Tenant` and `X-LDE-Actor` instead of tokens. An actor handle it hasn't seen is created with `scientist`, `reviewer`, `qa` and `admin`, audited as `system:dev-auth`, and every response carries `X-LDE-Auth: dev`. Its display name is its handle, and signing needs no re-authentication (the signature records `reauth_method = dev`). Never expose a dev server to anyone you wouldn't give admin. In prod those headers are ignored.
+`LDE_ENV` has no default: the server refuses to start without it. With `LDE_ENV=dev`, the server trusts `X-LDE-Tenant` and `X-LDE-Actor` instead of tokens. An actor handle it hasn't seen is created with `scientist`, `reviewer`, `qa` and `admin`, audited as `system:dev-auth`, and every response carries `X-LDE-Auth: dev`. Its display name is its handle, and signing needs no re-authentication (the signature records `reauth_method = dev`). Never expose a dev server to anyone you wouldn't give admin. In prod those headers are ignored.
