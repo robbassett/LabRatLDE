@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -197,13 +198,17 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	body := http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			return err // fail answers 413
-		}
+	err := dec.Decode(dst)
+	// The decoder stops at the end of a value or at a syntax error, so read the
+	// rest to learn the whole body's size. The limit bounds this read too.
+	var tooBig *http.MaxBytesError
+	if _, rest := io.Copy(io.Discard, body); errors.As(rest, &tooBig) {
+		return rest // fail answers 413
+	}
+	if err != nil {
 		return badRequest("invalid JSON body: %v", err)
 	}
 	return nil

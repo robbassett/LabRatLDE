@@ -20,14 +20,14 @@ No new Go dependencies, packages or interfaces. One migration. `golangci-lint` r
 
 **Signature link (R04, R05).** Migration `0021`:
 - `signatures.challenge_id uuid`, nullable because existing rows have none, with a foreign key to `signature_challenges (tenant_id, id)` and a partial unique index.
-- A new trigger `signatures_reauth_bound`. It is separate so `signatures_reject_mutation` needn't be copied, and its name sorts after `signatures_guard`, so it sees the stamped signer.
+- A new trigger `signatures_reauth_bound`. It is separate so `signatures_reject_mutation` needn't be copied, and its name sorts after `signatures_guard`, so it sees the stamped signer. It also requires `reauth_at <= login_at`, which normal signing always meets because `reauth_at` is the login time, clamped to the clock.
 - `signature_challenges_guard` is replaced: `lde_app` must set `login_at`, and the "only used_at may change" message now names `login_at` too.
 
 The service remains the only place that can verify a token, so this proves the service recorded a matching login. It does not stop a compromised service.
 
 **Env (R03).** `config.Load` errors when `LDE_ENV` is unset or empty. `make run`, the compose `labrat` service, the README and `.env.example` set it to `dev`.
 
-**Errors (R06 to R08).** `validateItems` rebuilds the error as a `badRequest` that includes the position, because `fail` prints only the inner `httpError`. `decodeJSON` returns a `MaxBytesError` unwrapped.
+**Errors (R06 to R08).** `validateItems` rebuilds the error as a `badRequest` that includes the position, because `fail` prints only the inner `httpError`. `decodeJSON` reads the rest of the body after decoding, because the decoder stops at the end of a value or a syntax error, and returns any `MaxBytesError` unwrapped.
 
 **Re-auth (R09).** `verifyReauth` checks the token and its claims before the transaction. `checkReauth` does the database checks inside it. Dev mode skips the first and needs no token.
 
@@ -40,7 +40,7 @@ None. The sign dialog already sends what the API needs. The item number appears 
 ## 4. Testing approach
 
 - R01: `internal/api/upload_integration_test.go` holds an upload open through `io.Pipe`, waits for its spool file, then requires no acquired connections and an audited write that completes. An earlier version, without the spool wait, failed on the unfixed code: the write hung until its 5-second timeout.
-- R04, R05: `internal/storage/signature_link_integration_test.go` and `TestSignatureChallengeRules`, plus the existing prod signing tests through the API. The unique index and the `LDE03` branch for a changed challenge are second lines: `signatures_guard` and the `xmin` check reject those cases first in any path reachable today, so no test reaches them.
+- R04, R05: `internal/storage/signature_link_integration_test.go` and `TestSignatureChallengeRules`, plus the existing prod signing tests through the API. The unique index and the `LDE03` branch for a changed challenge are second lines, and no test reaches them: `signatures_guard` and the `xmin` check reject those cases first through the API. If a change set committed in the same transaction invalidated a signature, the unique index would refuse a new signature on the same challenge with `23505` rather than `LDE07`; no API path does this.
 - Everything else is `Test: no`, checked by review and the manual steps in `tasks.md`.
 - This spec's migration stops older branches signing, so it uses its own database, `lde_spec023`, not `lde`.
 

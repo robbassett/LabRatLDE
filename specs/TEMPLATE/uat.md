@@ -14,7 +14,7 @@ Use synthetic data only. Never real patient, donor or staff identifiers.
 
 ## 1. Setup
 
-<!-- Exact steps from a clean checkout: docker compose up -d, go run ./cmd/server, dev tenant, fixtures from examples/.
+<!-- Exact steps from a clean checkout: docker compose up -d, LDE_ENV=dev go run ./cmd/server, dev tenant, fixtures from examples/.
      Commands are copy-pasteable. Where the feature has a UI, the cases use it; otherwise the public API. -->
 
 ## 2. Test cases
