@@ -205,7 +205,11 @@ func (s *Server) getManifest(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(text, &to); err != nil {
 			return err
 		}
-		res.Previous, res.Changes = &prev, domain.Diff(from, to)
+		res.Previous = &prev
+		// Diff returns nil when nothing changed; keep changes an array in JSON.
+		if changes := domain.Diff(from, to); changes != nil {
+			res.Changes = changes
+		}
 		return nil
 	})
 	if err != nil {

@@ -856,8 +856,13 @@ func TestManifestIsCanonical(t *testing.T) {
 		"step": 1, "meaning": "author", "manifest_sha256": m1.SHA256,
 	}, nil)
 	sendWant(t, srv, "", dev, http.StatusCreated, "POST", "/v1/lineage/nodes/"+run.NodeID+"/notes", map[string]string{"body": "late remark"}, nil)
-	if _, m := get(); m.Manifest != m1.Manifest {
+	_, m2 := get()
+	if m2.Manifest != m1.Manifest {
 		t.Errorf("manifest changed after an annotation")
+	}
+	// SPEC-008-R19: nothing changed since step 1, so changes is an empty array, not null.
+	if m2.Previous == nil || m2.Changes == nil || len(m2.Changes) != 0 {
+		t.Errorf("after step 1 with no change: previous %+v, changes %#v, want step 1 and []", m2.Previous, m2.Changes)
 	}
 
 	// A committed edit of an input changes its rev.
