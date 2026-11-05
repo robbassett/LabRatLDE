@@ -2425,42 +2425,14 @@ func TestSignatureChallengeRules(t *testing.T) {
 		t.Errorf("another tenant sees %d challenges, want 0", seen)
 	}
 
-	// One login signs once, across runs.
-	var second string
-	err = db.WithTenant(ctx, f.tenant, as(f.tenant), func(tx pgx.Tx) (err error) {
-		exp := newExperiment(t, tx, f.tenant, "second")
-		pv, _ := newProtocolVersion(t, tx, f.tenant, exp, 1, "# p\n")
-		second, err = insertRun(tx, f.tenant, exp, pv)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Pool.Exec(ctx, `UPDATE runs SET state = 'completed' WHERE id = $1`, second); err != nil {
-		t.Fatal(err)
-	}
+	// One login answers one challenge, across attempts.
+	first, err := challenge(f.tenant, f.alice, f.runID)
+	wantCode(t, "first attempt", err, "")
+	again, err := challenge(f.tenant, f.alice, f.runID)
+	wantCode(t, "second attempt", err, "")
 	login := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
-	sign := func(run string) error {
-		return db.WithTenant(ctx, f.tenant, f.alice, func(tx pgx.Tx) error {
-			var manifest string
-			var sum []byte
-			if err := tx.QueryRow(ctx, `INSERT INTO signature_manifests (tenant_id, run_id, manifest)
-				VALUES ($1, $2, $3) RETURNING id, sha256`, f.tenant, run, fmt.Sprintf(`{"run_id":%q}`, run)).Scan(&manifest, &sum); err != nil {
-				return err
-			}
-			var sig string
-			if err := tx.QueryRow(ctx, `INSERT INTO signatures (tenant_id, entity_type, entity_id, step, meaning, signer_id,
-					printed_name, manifest_id, manifest_sha256, reauth_at, reauth_method)
-				VALUES ($1, 'run', $2, 1, 'author', $3, 'x', $4, $5, $6, 'oidc') RETURNING id`,
-				f.tenant, run, f.alice.ID, manifest, sum, login).Scan(&sig); err != nil {
-				return err
-			}
-			_, err := audit.Append(ctx, tx, f.tenant, audit.Entry{
-				Actor: "alice", Action: "signature.applied", EntityType: "signature", EntityID: sig, Reason: "author",
-			})
-			return err
-		})
-	}
-	wantCode(t, "one login signs a run", sign(f.runID), "")
-	wantCode(t, "the same login signs another run", sign(second), "23505")
+	const useLogin = `UPDATE signature_challenges SET used_at = now(), login_at = $2 WHERE id = $1`
+	wantCode(t, "one login answers a challenge", exec(f.alice, useLogin, first, login), "")
+	wantCode(t, "the same login answers another", exec(f.alice, useLogin, again, login), "23505")
+	wantCode(t, "a new login answers it", exec(f.alice, useLogin, again, login.Add(time.Second)), "")
 }

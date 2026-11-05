@@ -16,6 +16,7 @@ import (
 
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/audit"
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/domain"
+	"github.com/Accelerate-Biotech/LabRatLDE/internal/storage"
 )
 
 // manifest is what a signature binds to (SPEC-008-R02). It holds nothing
@@ -327,19 +328,6 @@ func (s *Server) checkReauth(ctx context.Context, tx pgx.Tx, p Principal, runID,
 	if at.Add(maxChallengeSkew).Before(issued) {
 		return time.Time{}, "", "", notRecent
 	}
-	// One login proves one signature. The unique index signatures_one_per_login
-	// holds this if two requests race; this check gives the same answer as the
-	// other refusals.
-	var spent bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM signatures
-		               WHERE signer_id = $1 AND reauth_at = $2 AND reauth_method = 'oidc')`, p.As.ID, at).Scan(&spent)
-	if err != nil {
-		return time.Time{}, "", "", err
-	}
-	if spent {
-		return time.Time{}, "", "", notRecent
-	}
 	return at, "oidc", tok.Nonce, nil
 }
 
@@ -456,15 +444,21 @@ func (s *Server) signRun(w http.ResponseWriter, r *http.Request) {
 		if sha != req.ManifestSHA256 {
 			return &httpError{http.StatusConflict, "the record changed since you viewed it: review the new manifest and sign again"}
 		}
-		// A challenge proves one signature. Two requests racing on it can't both
-		// pass: the second finds it used, or fails here once the first commits.
+		// One challenge and one login prove one signature. Requests racing on either
+		// serialise on the chain lock, so the second finds the challenge used or hits
+		// the unique index on the login. The login is the token's auth_time as sent:
+		// reauth_at below may be clamped, and so can't identify it.
 		if challenge != "" {
-			tag, err := tx.Exec(ctx, `UPDATE signature_challenges SET used_at = now() WHERE id = $1 AND used_at IS NULL`, challenge)
+			spent := unauthorized("log in again to sign: your login is not recent enough")
+			tag, err := tx.Exec(ctx, `UPDATE signature_challenges SET used_at = now(), login_at = $2 WHERE id = $1 AND used_at IS NULL`, challenge, reauthAt)
+			if storage.ErrorCode(err) == "23505" {
+				return spent
+			}
 			if err != nil {
 				return err
 			}
 			if tag.RowsAffected() != 1 {
-				return unauthorized("log in again to sign: your login is not recent enough")
+				return spent
 			}
 		}
 		var manifestID string

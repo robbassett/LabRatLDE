@@ -73,7 +73,7 @@ A signature needs the signer to log in again just before. In production the UI s
 - its issuer and subject are the signer's own;
 - it has an `auth_time`, and that is at most `LDE_SIGN_REAUTH_MAX_AGE` ago (default `120s`). An `auth_time` up to 60 seconds ahead is tolerated for clock skew between the provider and the server.
 
-Otherwise the request is `401` and nothing is written. If `LDE_OIDC_UI_CLIENT_ID` is not set, signing is `501`. The identity provider must honour `prompt=login` and return `auth_time`: see [identity.md](identity.md).
+Otherwise the request is `401` and nothing is written. If `LDE_OIDC_UI_CLIENT_ID` is not set, signing is `501`. The identity provider must honour `prompt=login` and return `auth_time` and the `nonce`: see [identity.md](identity.md).
 
 **A login proves one signature.** Before redirecting, the UI asks for a challenge (`POST /v1/runs/{id}/sign-challenge`). Its id goes to the IdP as the OIDC `nonce`, so it comes back inside the ID token. The server refuses a token unless the challenge was issued to the signer for this run and manifest, is unused and under `LDE_SIGN_REAUTH_MAX_AGE` old, and the login isn't earlier than it. A recent sign-in therefore doesn't count, and a login that has already proved a signature can't prove another, even through a new challenge. Leaving the login page abandons the attempt; nothing is signed later. A user who takes longer than `LDE_SIGN_REAUTH_MAX_AGE` at the login form, MFA included, is refused and tries again, so raise it if your MFA is slow.
 

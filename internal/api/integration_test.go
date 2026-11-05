@@ -1124,8 +1124,27 @@ func TestSigningNeedsFreshReauth(t *testing.T) {
 	if status, raw := sign2(loginAt(login, signChallenge(t, srv, alice, second.ID, m2.SHA256))); status != http.StatusUnauthorized {
 		t.Errorf("the same login for a second run: %d %s, want 401", status, raw)
 	}
-	if status, raw := sign2(loginAt(login.Add(time.Second), signChallenge(t, srv, alice, second.ID, m2.SHA256))); status != http.StatusCreated {
+	// An IdP clock ahead of the database: the login is still one login, though
+	// reauth_at is clamped to the database clock.
+	ahead := login.Add(30 * time.Second)
+	if status, raw := sign2(loginAt(ahead, signChallenge(t, srv, alice, second.ID, m2.SHA256))); status != http.StatusCreated {
 		t.Errorf("a new login for the second run: %d %s, want 201", status, raw)
+	}
+	var third struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, alice, nil, http.StatusCreated, "POST", "/v1/runs", map[string]any{"experiment_id": exp.ExperimentID}, &third)
+	for _, to := range []string{"running", "completed"} {
+		sendWant(t, srv, alice, nil, http.StatusOK, "POST", "/v1/runs/"+third.ID+"/transitions", map[string]string{"to": to}, nil)
+	}
+	var m3 manifestResponse
+	sendWant(t, srv, alice, nil, http.StatusOK, "GET", "/v1/runs/"+third.ID+"/manifest", nil, &m3)
+	status, raw := send(t, srv, alice, nil, "POST", "/v1/runs/"+third.ID+"/signatures", map[string]any{
+		"step": 1, "meaning": "author", "manifest_sha256": m3.SHA256,
+		"reauth_token": loginAt(ahead, signChallenge(t, srv, alice, third.ID, m3.SHA256)),
+	})
+	if status != http.StatusUnauthorized {
+		t.Errorf("the same login with its clock ahead, for a third run: %d %s, want 401", status, raw)
 	}
 }
 

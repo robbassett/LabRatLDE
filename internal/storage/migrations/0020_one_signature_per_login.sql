@@ -2,16 +2,19 @@
 --
 -- A challenge is single-use, but one password entry could still answer several
 -- challenges through silent IdP code flows, all carrying the same auth_time. A
--- login is identified by its signer and auth_time, so that pair can sign once.
--- The index covers invalidated signatures too: re-signing after a correction
--- needs a new login.
+-- login is identified by its signer and auth_time, so that pair can answer one
+-- challenge. It is kept here as the token said it, because signatures.reauth_at
+-- is clamped to the database clock and so can't identify a login. A used
+-- challenge stays used, so re-signing after a correction needs a new login.
 --
 -- A challenge is also now only for someone who could sign the run. Before this,
 -- any principal could add an audit event per request, on any run.
 
 -- SPEC-008-R04
-CREATE UNIQUE INDEX signatures_one_per_login ON signatures (tenant_id, signer_id, reauth_at)
-    WHERE reauth_method = 'oidc';
+ALTER TABLE signature_challenges ADD COLUMN login_at timestamptz;
+CREATE UNIQUE INDEX signature_challenges_one_per_login ON signature_challenges (tenant_id, principal_id, login_at)
+    WHERE login_at IS NOT NULL;
+GRANT UPDATE (login_at) ON signature_challenges TO lde_app;
 
 -- SPEC-008-R04: as 0019, plus the gate on who may start a signing attempt.
 CREATE OR REPLACE FUNCTION signature_challenges_guard() RETURNS trigger
