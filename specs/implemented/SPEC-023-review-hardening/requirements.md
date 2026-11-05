@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Approved |
+| **Status** | Implemented |
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-11-05 / 2026-11-05 |
 | **Regulatory refs** | 21 CFR 11.10(d), 11.70, 11.200(a) |
@@ -38,7 +38,7 @@ A code review of the SPEC-008 branch found that one instrument upload can stop e
 | SPEC-023-R01 | While an instrument upload is being received, the API shall hold neither the tenant's audit chain lock nor a database connection, so other audited writes in the tenant complete. | yes | chain of custody, availability |
 | SPEC-023-R02 | When an instrument upload is parsed and its readings are stored, the API shall not take the tenant's audit chain lock until the readings are stored, and the upload shall stay atomic with its audit events. | no | availability |
 | SPEC-023-R03 | If `LDE_ENV` is unset or empty, then the server shall refuse to start and name the variable and its allowed values. | no | 11.10(d) |
-| SPEC-023-R04 | If a signature with `reauth_method = 'oidc'` does not name a challenge used in the same transaction, for the same signer, run and manifest, with a recorded login, or a `dev` signature names a challenge, or a challenge is named by a second signature, then the database shall reject it with SQLSTATE `LDE07`, and the database shall reject any change to a signature's challenge after insert. | yes | 11.70, 11.200(a) |
+| SPEC-023-R04 | If a signature with `reauth_method = 'oidc'` does not name a challenge used in the same transaction, for the same signer, run and manifest, with a recorded login, or a `dev` signature names a challenge, then the database shall reject it with SQLSTATE `LDE07`. The database shall also reject a second signature naming the same challenge (`LDE07`, or `23505` from the unique index when the first was invalidated in the same transaction) and any change to a signature's challenge after insert. | yes | 11.70, 11.200(a) |
 | SPEC-023-R05 | If `lde_app` marks a signature challenge used without a login time, then the database shall reject it with SQLSTATE `LDE07`. | yes | 11.200(a) |
 | SPEC-023-R06 | When a change set item fails validation, the API's error message shall name the item's position. | no | usability |
 | SPEC-023-R07 | If a JSON request body exceeds the size limit, then the API shall respond with status 413. | no | HTTP correctness |

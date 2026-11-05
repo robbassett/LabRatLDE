@@ -57,7 +57,7 @@ curl -s "${H[@]}" -X PATCH $API/experiments/$EXP/signing-policy -d '{
   "reason": "QA now approves every run"}'
 ```
 
-The API can't change the mode. An operator does it as the database owner, like `bootstrap-admin`, with the server's `LDE_DATABASE_URL` and `LDE_ENV`:
+The API can't change the mode. An operator does it as the database owner, like `bootstrap-admin`, with the server's environment (`LDE_DATABASE_URL`, `LDE_ENV` and, in prod, the OIDC issuer and audience):
 
 ```bash
 labrat set-gxp --tenant <tenant uuid> --gxp=false --actor "J. Doe" --reason "R&D tenant, not for regulated work"

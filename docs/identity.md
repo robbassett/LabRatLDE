@@ -33,7 +33,7 @@ The server fetches the issuer's discovery document at startup and refuses to sta
 
 ## Create the first admin
 
-Run this once per tenant, as the database owner (the server's `LDE_DATABASE_URL` and `LDE_ENV`):
+Run this once per tenant, as the database owner, with the server's environment (`LDE_DATABASE_URL`, `LDE_ENV` and, in prod, the OIDC issuer and audience):
 
 ```bash
 labrat bootstrap-admin --tenant <tenant uuid> \

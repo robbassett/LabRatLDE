@@ -6,32 +6,32 @@ Use a database of your own: `make test-integration TEST_DB='postgres://lde:lde@l
 
 ## Phase 1: Database
 
-- [ ] 1.1 Migration `0021_signature_challenge_link`, and `signRun` passes `challenge_id`
+- [x] 1.1 Migration `0021_signature_challenge_link`, and `signRun` passes `challenge_id`
   - Requirements: SPEC-023-R04, SPEC-023-R05
   - Integrity: yes
 
 ## Phase 2: Uploads
 
-- [ ] 2.1 Failing test, then spool the body and defer the chain lock
+- [x] 2.1 Failing test, then spool the body and defer the chain lock
   - Requirements: SPEC-023-R01, SPEC-023-R02
   - Integrity: yes
 
 ## Phase 3: Configuration and small bugs
 
-- [ ] 3.1 Require `LDE_ENV`; update `Makefile`, compose, README, `.env.example`, docs
+- [x] 3.1 Require `LDE_ENV`; update `Makefile`, compose, README, `.env.example`, docs
   - Requirements: SPEC-023-R03
   - Verify: `go run ./cmd/server` with no `LDE_ENV` exits with the message.
-- [ ] 3.2 Item position, 413, `/healthz`, token verified before the transaction
+- [x] 3.2 Item position, 413, `/healthz`, token verified before the transaction
   - Requirements: SPEC-023-R06, SPEC-023-R07, SPEC-023-R08, SPEC-023-R09
 
 ## Phase 4: Readability
 
-- [ ] 4.1 Split `signRun` and `decideChangeSet`; `CollectRows` in `buildManifest`; one dataset join; remove needless reads
+- [x] 4.1 Split `signRun` and `decideChangeSet`; `CollectRows` in `buildManifest`; one dataset join; remove needless reads
   - Requirements: SPEC-023-R10
   - Verify: `TestManifestIsCanonical` passes; `golangci-lint` reports both under 30.
-- [ ] 4.2 `.golangci.yml`, CI step, `make schema`, `docs/schema.sql`
+- [x] 4.2 `.golangci.yml`, CI step, `make schema`, `docs/schema.sql`
   - Requirements: SPEC-023-R11
 
 ## Phase 5: Verify and close out
 
-- [ ] 5.1 `make test-integration`, integrity review, verifier, UAT plan, move to `specs/implemented/`
+- [x] 5.1 `make test-integration`, integrity review, verifier, UAT plan, move to `specs/implemented/`
