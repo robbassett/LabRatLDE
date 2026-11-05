@@ -11,6 +11,7 @@ import LineageView from './LineageView';
 import MeView from './MeView';
 import PrincipalsView from './PrincipalsView';
 import RunView from './RunView';
+import SignoffView from './SignoffView';
 import type { Instrument } from './api';
 import { SINGLETONS, tabKey, useTabs, type Tab } from './tabs';
 
@@ -33,6 +34,8 @@ function TabContent({ tab, instruments, verifyOnOpen, open, rename }: { tab: Tab
       return <AuditView id={tab.id} verifyOnOpen={verifyOnOpen} />;
     case 'inbox':
       return <InboxView />;
+    case 'signoff':
+      return <SignoffView open={open} />;
     case 'me':
       return <MeView />;
     case 'principals':
@@ -83,6 +86,7 @@ export default function Workspace({ onSignOut }: { onSignOut: () => void }) {
       },
     },
     { id: 'cmd:inbox', title: 'Review inbox', hint: 'Command', run: () => open(SINGLETONS.inbox!) },
+    { id: 'cmd:signoff', title: 'Sign-off inbox', hint: 'Command', run: () => open(SINGLETONS.signoff!) },
     { id: 'cmd:me', title: 'My account', hint: 'Command', run: () => open(SINGLETONS.me!) },
     { id: 'cmd:principals', title: 'Principals', hint: 'Admin', run: () => open(SINGLETONS.principals!) },
     { id: 'cmd:delegations', title: 'Agent delegations', hint: 'Admin', run: () => open(SINGLETONS.delegations!) },

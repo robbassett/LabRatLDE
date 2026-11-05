@@ -51,6 +51,7 @@ func TestVerdicts(t *testing.T) {
 		failed   string
 		goPassed bool
 		dirty    bool
+		e2e      bool
 		verdicts map[string]string
 		unknown  []string
 		result   string
@@ -92,6 +93,14 @@ func TestVerdicts(t *testing.T) {
 			verdicts: map[string]string{"SPEC-900-R01": "VERIFIED"},
 			result:   "FAIL",
 		},
+		{
+			name:     "f: a Playwright citation with no result",
+			drop:     true,
+			goPassed: true,
+			e2e:      true,
+			verdicts: map[string]string{"SPEC-900-R01": "NOT VERIFIED"},
+			result:   "FAIL",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,6 +108,9 @@ func TestVerdicts(t *testing.T) {
 			results := passingResults()
 			if tc.drop {
 				cites = dropR02(reqs, cites)
+			}
+			if tc.e2e {
+				cites = append(cites, citation{ID: "SPEC-900-R01", Package: "web/e2e", Test: "fixture flow", File: "web/e2e/fixture.spec.ts"})
 			}
 			if tc.failed != "" {
 				results[tc.failed] = testResult{Result: "fail"}

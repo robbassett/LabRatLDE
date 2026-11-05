@@ -31,6 +31,8 @@ func main() {
 			do = func() error { return runIQ(os.Args[2:]) }
 		case "bootstrap-admin":
 			do = func() error { return runBootstrapAdmin(os.Args[2:]) }
+		case "set-gxp":
+			do = func() error { return runSetGxP(os.Args[2:]) }
 		}
 	}
 	if err := do(); err != nil {
@@ -79,7 +81,7 @@ func run() error {
 		log.Info("dev tenant ready", "tenant_id", config.DevTenantID)
 	}
 
-	var verifier api.TokenVerifier
+	var verifier, reauth api.TokenVerifier
 	if cfg.Env == "prod" {
 		discoverCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		provider, err := oidc.NewProvider(discoverCtx, cfg.OIDCIssuer)
@@ -91,11 +93,15 @@ func run() error {
 		// refetching (on a background context) when it sees an unknown key id.
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.OIDCAudience})
 		log.Info("oidc ready", "issuer", cfg.OIDCIssuer, "audience", cfg.OIDCAudience)
+		// Signing re-authenticates with the UI client's ID token (SPEC-008-R04).
+		if cfg.OIDCUIClientID != "" {
+			reauth = provider.Verifier(&oidc.Config{ClientID: cfg.OIDCUIClientID})
+		}
 	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.New(cfg, db, log, verifier).Handler(),
+		Handler:           api.New(cfg, db, log, verifier, reauth).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No Read/WriteTimeout: instrument streams are long-lived by

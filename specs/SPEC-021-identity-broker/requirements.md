@@ -54,7 +54,7 @@ Fixture: the reference broker, realm `t1` for LabRat tenant `T1`, federating a t
 
 **SPEC-021-R03**: the realm's login page has no password form and no registration link. A broker user created for the email alice@idp.test isn't linked when a different upstream user with that email signs in.
 
-**SPEC-021-R04**: alice is signed in. A request with `prompt=login` causes the test IdP to show its login form again, and the new token's `auth_time` is later than the first one's.
+**SPEC-021-R04**: alice is signed in. A request with `prompt=login` causes the test IdP to show its login form again, and the new token's `auth_time` is later than the first one's. The new ID token carries the `nonce` from the request (SPEC-008-R04).
 
 ## 5. Open questions
 

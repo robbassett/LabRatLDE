@@ -54,10 +54,10 @@ Clients:
 To get a working prod setup in one go:
 
 ```bash
-sh tools/keycloak/reset-uat.sh && . tools/keycloak/uat.env
+sh tools/keycloak/reset-uat.sh && . tools/keycloak/uat.env && prod_env
 go run ./cmd/server bootstrap-admin --tenant $T1 --slug lab-a1 --name "UAT lab" \
   --issuer $ISSUER --subject $SUB_CAROL --handle carol --display-name "Carol Admin" --email carol@lab.test
-prod_env && go run ./cmd/server
+go run ./cmd/server
 ```
 
 Then open http://localhost:8080/, choose **Sign in with your organisation**, and log in as `carol`. Under **Principals** she can create alice, bob and the agent bot, with issuer `$ISSUER` and the subjects in the table.

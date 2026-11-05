@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -37,10 +38,11 @@ type Server struct {
 	db       *storage.DB
 	log      *slog.Logger
 	verifier TokenVerifier // nil in dev
+	reauth   TokenVerifier // checks the UI client's ID token at signing; nil in dev or without a UI client
 }
 
-func New(cfg config.Config, db *storage.DB, log *slog.Logger, verifier TokenVerifier) *Server {
-	return &Server{cfg: cfg, db: db, log: log, verifier: verifier}
+func New(cfg config.Config, db *storage.DB, log *slog.Logger, verifier, reauth TokenVerifier) *Server {
+	return &Server{cfg: cfg, db: db, log: log, verifier: verifier, reauth: reauth}
 }
 
 // Handler returns the fully wired router.
@@ -55,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/me", s.getMe)
 	v1.HandleFunc("GET /v1/principals", s.listPrincipals)
 	v1.HandleFunc("POST /v1/principals", s.createPrincipal)
+	v1.HandleFunc("PATCH /v1/principals/{id}", s.renamePrincipal)
 	v1.HandleFunc("POST /v1/principals/{id}/disable", s.disablePrincipal)
 	v1.HandleFunc("POST /v1/role-grants", s.createRoleGrant)
 	v1.HandleFunc("POST /v1/role-grants/{id}/revoke", s.revokeRoleGrant)
@@ -66,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/experiments", s.listExperiments)
 	v1.HandleFunc("GET /v1/experiments/{id}", s.getExperiment)
 	v1.HandleFunc("PATCH /v1/experiments/{id}", s.patchExperiment)
+	v1.HandleFunc("PATCH /v1/experiments/{id}/signing-policy", s.patchSigningPolicy)
 	v1.HandleFunc("POST /v1/experiments/{id}/protocol-versions", s.createProtocolVersion)
 	v1.HandleFunc("GET /v1/experiments/{id}/protocol-versions", s.listProtocolVersions)
 	v1.HandleFunc("GET /v1/protocol-versions/{id}", s.getProtocolVersion)
@@ -75,6 +79,11 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/runs/{id}", s.getRun)
 	v1.HandleFunc("POST /v1/runs/{id}/transitions", s.transitionRun)
 	v1.HandleFunc("PATCH /v1/runs/{id}/params", s.patchRunParams)
+	v1.HandleFunc("GET /v1/runs/{id}/manifest", s.getManifest)
+	v1.HandleFunc("POST /v1/runs/{id}/sign-challenge", s.createSignChallenge)
+	v1.HandleFunc("POST /v1/runs/{id}/signatures", s.signRun)
+	v1.HandleFunc("GET /v1/runs/{id}/signatures", s.listSignatures)
+	v1.HandleFunc("GET /v1/inbox/signatures", s.listSignoffs)
 
 	v1.HandleFunc("POST /v1/lineage/nodes", s.createNode)
 	v1.HandleFunc("PATCH /v1/lineage/nodes/{id}", s.patchNode)
@@ -126,7 +135,9 @@ func (s *Server) uiConnectSrc() []string {
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Pool.Ping(r.Context()); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": err.Error()})
+		// This endpoint is public, and the error can name the database's host and user.
+		s.log.Error("health check failed", "err", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": "unavailable"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -187,9 +198,17 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	body := http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	err := dec.Decode(dst)
+	// The decoder stops at the end of a value or at a syntax error, so read the
+	// rest to learn the whole body's size. The limit bounds this read too.
+	var tooBig *http.MaxBytesError
+	if _, rest := io.Copy(io.Discard, body); errors.As(rest, &tooBig) {
+		return rest // fail answers 413
+	}
+	if err != nil {
 		return badRequest("invalid JSON body: %v", err)
 	}
 	return nil

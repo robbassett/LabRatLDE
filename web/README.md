@@ -24,7 +24,7 @@ call goes to a public `/v1` endpoint that a curl user could also call.
 
 ## Develop
 
-Run the Go server (`go run ./cmd/server`) and then `npm run dev` here. Vite
+Run the Go server (`make run`) and then `npm run dev` here. Vite
 serves the UI on its own port and proxies `/v1` to `:8080`.
 
 ## Test

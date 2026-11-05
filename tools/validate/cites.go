@@ -5,10 +5,14 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+// e2ePackage is the package name of Playwright citations and results.
+const e2ePackage = "web/e2e"
 
 // citation is one requirement ID cited by one top-level test.
 type citation struct {
@@ -91,6 +95,44 @@ func scanFile(root, path, module string) ([]citation, error) {
 					seen[id] = true
 					cites = append(cites, citation{ID: id, Package: pkg, Test: fn.Name.Name, File: file})
 				}
+			}
+		}
+	}
+	return cites, nil
+}
+
+// e2eTitle matches the start of a Playwright test: test('title', ...).
+var e2eTitle = regexp.MustCompile(`^\s*test\(\s*(?:'([^']*)'|"([^"]*)")`)
+
+// scanE2E finds every SPEC-NNN-RNN cited on the line above test( in the
+// web/e2e/*.spec.ts files under root. The citation's package is web/e2e and
+// its test is the test title.
+func scanE2E(root string) ([]citation, error) {
+	files, err := filepath.Glob(filepath.Join(root, "web", "e2e", "*.spec.ts"))
+	if err != nil {
+		return nil, err
+	}
+	var cites []citation
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		lines := strings.Split(string(data), "\n")
+		for i := 1; i < len(lines); i++ {
+			m := e2eTitle.FindStringSubmatch(lines[i])
+			above := strings.TrimSpace(lines[i-1])
+			if m == nil || !strings.HasPrefix(above, "//") {
+				continue
+			}
+			title := m[1] + m[2]
+			seen := map[string]bool{}
+			for _, id := range specRef.FindAllString(above, -1) {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				cites = append(cites, citation{ID: id, Package: e2ePackage, Test: title, File: "web/e2e/" + filepath.Base(path)})
 			}
 		}
 	}

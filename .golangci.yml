@@ -1,0 +1,12 @@
+# A ratchet on complexity, not a style guide (SPEC-023-R11). Everything passes
+# at 50 today; lower the limit as the code improves, and don't raise it.
+version: "2"
+run:
+  tests: false
+linters:
+  default: none
+  enable:
+    - gocognit
+  settings:
+    gocognit:
+      min-complexity: 50

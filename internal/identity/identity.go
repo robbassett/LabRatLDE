@@ -128,6 +128,28 @@ func SetEnabled(ctx context.Context, tx pgx.Tx, actor, tenantID, id string, enab
 	return p, err
 }
 
+// SetDisplayName corrects a principal's printed name and audits
+// principal.renamed with the old and new names. A name already in place is
+// returned as is, with no event; an unknown principal fails with
+// pgx.ErrNoRows. The database rejects a blank name (check_violation) and
+// anyone but an admin (LDE05). Signatures already applied keep their name.
+func SetDisplayName(ctx context.Context, tx pgx.Tx, actor, tenantID, id, name, reason string) (Principal, error) {
+	var from, handle string
+	if err := tx.QueryRow(ctx, `SELECT display_name, handle FROM principals WHERE id = $1 FOR NO KEY UPDATE`, id).Scan(&from, &handle); err != nil {
+		return Principal{}, err
+	}
+	p, err := scanPrincipal(tx.QueryRow(ctx, `UPDATE principals SET display_name = $2 WHERE id = $1
+		RETURNING `+principalColumns, id, name))
+	if err != nil || from == name {
+		return p, err
+	}
+	_, err = audit.Append(ctx, tx, tenantID, audit.Entry{
+		Actor: actor, Action: "principal.renamed", EntityType: "principal", EntityID: id, Reason: reason,
+		Payload: map[string]any{"handle": handle, "from": from, "to": name},
+	})
+	return p, err
+}
+
 // ByID, ByHandle and BySubject return pgx.ErrNoRows when there is no such
 // principal.
 func ByID(ctx context.Context, tx pgx.Tx, id string) (Principal, error) {

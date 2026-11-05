@@ -45,7 +45,12 @@ export type Principal = {
   roles: RoleGrant[];
 };
 
-export type Me = Principal & { actor: string; on_behalf_of: string | null; auth: 'dev' | 'oidc' };
+export type Me = Principal & {
+  actor: string;
+  on_behalf_of: string | null;
+  auth: 'dev' | 'oidc';
+  tenant_gxp: boolean;
+};
 
 export type Delegation = {
   id: string;
@@ -70,6 +75,26 @@ export type NewPrincipal = {
 
 export type ExperimentSummary = { id: string; slug: string; title: string; created_at: string };
 
+// PolicyStep is one step of a signing policy (SPEC-008-R05).
+export type PolicyStep = { step: number; meaning: string; role: Role };
+
+// Signature mirrors domain.Signature. It is valid until a committed correction invalidates it.
+export type Signature = {
+  id: string;
+  step: number;
+  meaning: string;
+  signer: string;
+  printed_name: string;
+  signed_at: string;
+  manifest_sha256: string;
+  comment: string | null;
+  reauth_method: string;
+  valid: boolean;
+  invalidated_at: string | null;
+  invalidated_by_change_set: string | null;
+  invalidated_reason: string | null;
+};
+
 export type Experiment = {
   id: string;
   slug: string;
@@ -79,6 +104,7 @@ export type Experiment = {
   protocol_sha256: string;
   protocol_md: string;
   protocol_meta: unknown;
+  signing_policy: PolicyStep[];
   created_by: string;
   created_at: string;
 };
@@ -97,7 +123,14 @@ export type ProtocolVersion = {
 
 export type RunState = 'planned' | 'running' | 'paused' | 'completed' | 'failed' | 'aborted' | 'signed';
 
-export type RunSummary = { id: string; label: string; state: RunState; created_at: string };
+export type RunSummary = {
+  id: string;
+  label: string;
+  state: RunState;
+  created_at: string;
+  signing_policy: PolicyStep[];
+  signatures: Signature[];
+};
 
 export type Run = {
   id: string;
@@ -107,6 +140,8 @@ export type Run = {
   node_id: string;
   state: RunState;
   params: unknown;
+  signing_policy: PolicyStep[];
+  signatures: Signature[];
   started_at?: string;
   finished_at?: string;
   created_by: string;
@@ -122,6 +157,27 @@ export type RunDetail = Run & {
   protocol_sha256: string;
   inputs: RunInput[];
   datasets: RunDataset[];
+};
+
+// RunManifest is GET /v1/runs/{id}/manifest. manifest is the canonical JSON text that sha256 covers;
+// previous and changes describe the latest valid signature, if any (SPEC-008-R02, R19).
+export type RunManifest = {
+  manifest: string;
+  sha256: string;
+  previous: { step: number; sha256: string } | null;
+  changes: Change[];
+};
+
+// SignoffItem is a run waiting for the caller's signature (SPEC-008-R05).
+export type SignoffItem = {
+  run_id: string;
+  label: string;
+  experiment_id: string;
+  experiment_title: string;
+  state: RunState;
+  step: number;
+  meaning: string;
+  finished_at: string;
 };
 
 export type Instrument = {
@@ -244,7 +300,11 @@ export type ChangeSet = {
 };
 
 // ChangeSetDetail's current holds, per item, the target's latest revision value (or null).
-export type ChangeSetDetail = ChangeSet & { current: unknown[] };
+// invalidates lists the runs whose valid signatures a commit would invalidate (SPEC-008-R10).
+export type ChangeSetDetail = ChangeSet & {
+  current: unknown[];
+  invalidates: { run_id: string; signatures: number }[];
+};
 
 // ChangeSetSummary is a change set in a list, with the item count.
 export type ChangeSetSummary = {
@@ -304,6 +364,15 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
+// ApiError is a failed request: the server's message, and its HTTP status.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (accessToken) {
@@ -317,7 +386,9 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (res.status === 401 && path !== '/v1/meta') onUnauthorized();
+  // A refused signature is a stale login for that signature, not an ended session: the dialog says so.
+  const refusedSignature = method === 'POST' && path.endsWith('/signatures');
+  if (res.status === 401 && path !== '/v1/meta' && !refusedSignature) onUnauthorized();
   if (!res.ok) {
     let msg: string | undefined;
     try {
@@ -326,7 +397,7 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
     } catch {
       // Not JSON: fall back to the status code.
     }
-    throw new Error(msg ?? String(res.status));
+    throw new ApiError(msg ?? String(res.status), res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -497,10 +568,42 @@ export function proposeChangeSet(title: string, reason: string, items: ChangeIte
   return post('/v1/change-sets', { title, reason, items });
 }
 
+// A commit carries itemsSha256, the hash of the items the reviewer read (SPEC-008-R20).
 export function decideChangeSet(
   id: string,
   decision: 'commit' | 'reject' | 'withdraw',
   reason: string,
+  itemsSha256?: string,
 ): Promise<ChangeSet> {
-  return post(`/v1/change-sets/${encodeURIComponent(id)}/${decision}`, { reason });
+  return post(`/v1/change-sets/${encodeURIComponent(id)}/${decision}`, { reason, items_sha256: itemsSha256 });
+}
+
+export function getManifest(runId: string): Promise<RunManifest> {
+  return get(`/v1/runs/${encodeURIComponent(runId)}/manifest`);
+}
+
+// signRun applies the next policy step. manifestSha256 is the hash the signer saw; reauthToken is the
+// fresh ID token in prod and omitted in dev.
+// createSignChallenge starts one signing attempt: the nonce goes to the IdP with the forced login.
+export function createSignChallenge(runId: string, manifestSha256: string): Promise<{ nonce: string }> {
+  return post(`/v1/runs/${encodeURIComponent(runId)}/sign-challenge`, { manifest_sha256: manifestSha256 });
+}
+
+export function signRun(
+  runId: string,
+  req: { step: number; meaning: string; manifest_sha256: string; comment?: string; reauth_token?: string },
+): Promise<Signature> {
+  return post(`/v1/runs/${encodeURIComponent(runId)}/signatures`, req);
+}
+
+export function listSignoff(cursor?: string): Promise<Page<SignoffItem>> {
+  return get(`/v1/inbox/signatures${qs({ cursor })}`);
+}
+
+export function setSigningPolicy(experimentId: string, policy: PolicyStep[], reason: string): Promise<EditResult> {
+  return patch(`/v1/experiments/${encodeURIComponent(experimentId)}/signing-policy`, { signing_policy: policy, reason });
+}
+
+export function renamePrincipal(id: string, displayName: string, reason: string): Promise<Principal> {
+  return patch(`/v1/principals/${encodeURIComponent(id)}`, { display_name: displayName, reason });
 }

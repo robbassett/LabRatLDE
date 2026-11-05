@@ -6,13 +6,20 @@ type Props = {
   multiline?: boolean;
   json?: boolean;
   changed: boolean;
-  onSave: (value: string, reason: string) => Promise<void>;
+  // proposeOnly: the record is signed, so onSave must propose a change set (SPEC-008-R09, R10).
+  proposeOnly?: boolean;
+  // readOnly: the record is frozen and can't be corrected (aborted, or signed before SPEC-008).
+  readOnly?: boolean;
+  // onSave resolves 'proposed' when it proposed a change set instead of changing the record.
+  onSave: (value: string, reason: string) => Promise<void | 'proposed'>;
 };
 
 // EditField shows a value with an Edit control. Saving needs a reason. A "changed" button
-// opens the bottom panel's Revisions tab. A successful save dispatches labrat:revised.
-export default function EditField({ label, value, multiline, json, changed, onSave }: Props) {
+// opens the bottom panel's Revisions tab. A successful save dispatches labrat:revised, unless it
+// only proposed a correction, which links to the review inbox instead.
+export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, onSave }: Props) {
   const [editing, setEditing] = useState(false);
+  const [proposed, setProposed] = useState(false);
   const [draft, setDraft] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +37,7 @@ export default function EditField({ label, value, multiline, json, changed, onSa
     setDraft(value);
     setReason('');
     setError(null);
+    setProposed(false);
     setEditing(true);
   }
 
@@ -56,9 +64,10 @@ export default function EditField({ label, value, multiline, json, changed, onSa
     setSaving(true);
     setError(null);
     try {
-      await onSave(draft, reason.trim());
+      const result = await onSave(draft, reason.trim());
       setEditing(false);
-      window.dispatchEvent(new CustomEvent('labrat:revised'));
+      if (proposeOnly || result === 'proposed') setProposed(true);
+      else window.dispatchEvent(new CustomEvent('labrat:revised'));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -70,9 +79,18 @@ export default function EditField({ label, value, multiline, json, changed, onSa
     return (
       <div className="edit-field">
         <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
-        <button type="button" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
-          Edit
-        </button>
+        {readOnly ? (
+          <span className="muted"> Read-only: this record is frozen.</span>
+        ) : (
+          <button type="button" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
+            Edit
+          </button>
+        )}
+        {proposed && (
+          <p role="status">
+            Correction proposed. A reviewer can commit it from the <a href="#/inbox">Review inbox</a>.
+          </p>
+        )}
         {changed && (
           <button
             type="button"
@@ -89,6 +107,9 @@ export default function EditField({ label, value, multiline, json, changed, onSa
 
   return (
     <form className="edit-form" onSubmit={save}>
+      {proposeOnly && (
+        <p className="muted">This record is signed. Your change is proposed as a correction, and a reviewer must commit it.</p>
+      )}
       <label>
         {label}
         {json || multiline ? (
@@ -115,7 +136,7 @@ export default function EditField({ label, value, multiline, json, changed, onSa
       )}
       <div className="actions">
         <button type="submit" disabled={saving || reason.trim() === ''}>
-          Save
+          {proposeOnly ? 'Propose correction' : 'Save'}
         </button>
         <button type="button" onClick={cancel} disabled={saving}>
           Cancel

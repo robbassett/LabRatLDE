@@ -1,8 +1,9 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 TEST_DB ?= postgres://lde:lde@localhost:5432/lde?sslmode=disable
 OPERATOR ?=
+SCHEMA_DB ?= lde
 
-.PHONY: build ui e2e run test test-integration validate vet up down image verify-chain
+.PHONY: build ui e2e run test test-integration validate vet up down image verify-chain schema
 
 build: ## Static binary in ./bin
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/labrat ./cmd/server
@@ -13,8 +14,11 @@ ui: ## Build the web UI into web/dist (embedded by the server)
 e2e: ## Browser end-to-end tests (needs `make ui` and `make up`)
 	cd web && npm run e2e
 
-run: ## Run against the compose stack
-	go run ./cmd/server
+run: ## Run in dev mode against the compose stack
+	LDE_ENV=dev go run ./cmd/server
+
+schema: ## Write the migrated schema to docs/schema.sql, for reading (migrations stay authoritative)
+	docker compose exec -T postgres pg_dump -U lde -d $(SCHEMA_DB) --schema-only --no-owner | grep -vE '^.(un)?restrict ' > docs/schema.sql
 
 test: ## Unit tests (no database)
 	go test ./...

@@ -67,6 +67,8 @@ Fixture: alice (scientist), bob (reviewer), bot (agent acting for alice). Sample
 
 **SPEC-007-R10**: run `R` is signed (SPEC-002 seal). A change set editing `R` params is created successfully, but its commit returns `409`.
 
+> **Superseded by SPEC-008** (2026-11-04): a change set that touches a record sealed by a valid signature can now be committed by a reviewer or QA who is neither its author nor the human an agent author acts for, and the commit invalidates the run's signatures. The commit still returns `409` for aborted runs and runs signed before SPEC-008. See [SPEC-008](../SPEC-008-electronic-signatures/requirements.md) R09, R10, R20.
+
 **SPEC-007-R13**: alice adds note "Freezer alarm at 02:10, samples unaffected" to sealed run `R`. It succeeds with `annotation = true` and `R` remains sealed. A change set editing a note written before signing is rejected at commit, as in R10.
 
 ## 5. Open questions

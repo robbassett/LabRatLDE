@@ -63,6 +63,8 @@ The initial scaffold was built before the spec process existed. This spec record
 
 **SPEC-001-R11/R12**: planned→running→paused→running→completed→signed("approved") succeeds; then signed→running fails; completed→signed("  ") fails; planned→completed fails.
 
+> **Superseded by SPEC-008** (2026-11-04): R11's "signed shall be terminal" holds for the transitions endpoint only, which now refuses `to: signed` with `400`. A run moves to `signed` through the signatures endpoint and returns to `completed` or `failed` when a committed correction invalidates its signatures. R12's free-text reason for `signed` is replaced by a meaning from a controlled list (`author`, `review`, `approval`, `verification`); `aborted` still needs a reason. See [SPEC-008](../SPEC-008-electronic-signatures/requirements.md) R08, R10, R14.
+
 **SPEC-001-R13**: Given a 3-reading NDJSON body with a blank line, the summary has count 3 and a SHA-256 equal to the hash of the whole raw body.
 
 ## 5. Open questions

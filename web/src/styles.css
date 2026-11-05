@@ -676,3 +676,57 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Signatures (SPEC-008). An invalidated row is also struck through and says why, so colour isn't the only cue. */
+.data tr.invalidated td {
+  color: var(--muted);
+}
+
+.sign-dialog {
+  width: min(48rem, 92vw);
+  max-height: 90vh;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.sign-dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+
+.sign-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.sign-summary dt {
+  color: var(--muted);
+}
+
+.sign-summary dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sign-changes {
+  margin: 0 0 0.5rem;
+  padding-left: 1.25rem;
+}
+
+.sign-field {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0.75rem 0;
+}
+
+.sign-confirm {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.75rem 0;
+}

@@ -1,6 +1,7 @@
 // Package config loads runtime configuration from the environment
-// (twelve-factor). Every setting has a dev-friendly default so that
-// `docker compose up -d && go run ./cmd/server` works with zero setup.
+// (twelve-factor). Every setting but LDE_ENV has a dev-friendly default. LDE_ENV
+// has none, because dev trusts request headers for identity, and a server must
+// never fall into that by accident (SPEC-023-R03).
 package config
 
 import (
@@ -30,11 +31,14 @@ type Config struct {
 	OIDCUIClientID  string        // LDE_OIDC_UI_CLIENT_ID: the UI's public client
 	OIDCUIScopes    string        // LDE_OIDC_UI_SCOPES: space-separated
 	UIIdleTimeout   time.Duration // LDE_UI_IDLE_TIMEOUT
+
+	// SignReauthMaxAge is how old a signer's login may be (SPEC-008-R04).
+	SignReauthMaxAge time.Duration // LDE_SIGN_REAUTH_MAX_AGE
 }
 
 func Load() (Config, error) {
 	c := Config{
-		Env:             env("LDE_ENV", "dev"),
+		Env:             env("LDE_ENV", ""),
 		HTTPAddr:        env("LDE_HTTP_ADDR", ":8080"),
 		DatabaseURL:     env("LDE_DATABASE_URL", "postgres://lde:lde@localhost:5432/lde?sslmode=disable"),
 		OIDCIssuer:      env("LDE_OIDC_ISSUER", ""),
@@ -42,6 +46,9 @@ func Load() (Config, error) {
 		OIDCTenantClaim: env("LDE_OIDC_TENANT_CLAIM", "lde_tenant"),
 		OIDCUIClientID:  env("LDE_OIDC_UI_CLIENT_ID", ""),
 		OIDCUIScopes:    env("LDE_OIDC_UI_SCOPES", "openid profile email"),
+	}
+	if c.Env == "" {
+		return c, fmt.Errorf("config: LDE_ENV is required: set it to dev or prod")
 	}
 	var err error
 	if c.AutoMigrate, err = strconv.ParseBool(env("LDE_AUTO_MIGRATE", "true")); err != nil {
@@ -58,6 +65,9 @@ func Load() (Config, error) {
 	}
 	if c.UIIdleTimeout, err = time.ParseDuration(env("LDE_UI_IDLE_TIMEOUT", "15m")); err != nil || c.UIIdleTimeout < time.Minute {
 		return c, fmt.Errorf("config: LDE_UI_IDLE_TIMEOUT must be a duration of at least 1m, got %q", os.Getenv("LDE_UI_IDLE_TIMEOUT"))
+	}
+	if c.SignReauthMaxAge, err = time.ParseDuration(env("LDE_SIGN_REAUTH_MAX_AGE", "120s")); err != nil || c.SignReauthMaxAge <= 0 {
+		return c, fmt.Errorf("config: LDE_SIGN_REAUTH_MAX_AGE must be a positive duration, got %q", os.Getenv("LDE_SIGN_REAUTH_MAX_AGE"))
 	}
 	if c.Env != "dev" && c.Env != "prod" {
 		return c, fmt.Errorf("config: LDE_ENV must be dev or prod, got %q", c.Env)

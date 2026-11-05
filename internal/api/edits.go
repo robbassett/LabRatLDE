@@ -26,6 +26,10 @@ type note struct {
 // insertNote adds a note to a lineage node and audits it. The database marks
 // a note on a sealed node as an annotation.
 func insertNote(ctx context.Context, tx pgx.Tx, p Principal, nodeID, body string) (note, error) {
+	// The notes trigger locks the run. Take the chain lock first, as signing does.
+	if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+		return note{}, err
+	}
 	n := note{Rev: 1}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO notes (tenant_id, node_id, body, created_by)
@@ -145,6 +149,47 @@ func (s *Server) patchExperiment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it := changeItem{Op: "set_experiment_title", ExperimentID: id, Title: req.Title}
+	if err := it.validate(); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var res editResult
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
+		res, err = directEdit(ctx, tx, p, "experiment", id, req.Reason, it)
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// patchSigningPolicy replaces an experiment's signing policy as a direct
+// change set. The database lets only the roles the tenant's GxP setting names
+// do so (SPEC-008-R15). Runs already created keep their copy.
+//
+//	PATCH /v1/experiments/{id}/signing-policy   {"signing_policy": [{"step": 1, "meaning": "author", "role": "scientist"}], "reason": "..."}
+func (s *Server) patchSigningPolicy(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("experiment"))
+		return
+	}
+	var req struct {
+		SigningPolicy json.RawMessage `json:"signing_policy"`
+		Reason        string          `json:"reason"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		s.fail(w, r, badRequest("reason is required"))
+		return
+	}
+	it := changeItem{Op: "set_signing_policy", ExperimentID: id, SigningPolicy: req.SigningPolicy}
 	if err := it.validate(); err != nil {
 		s.fail(w, r, err)
 		return
