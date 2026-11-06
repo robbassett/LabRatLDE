@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | In review |
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-11-06 / 2026-11-06 |
 | **Regulatory refs** | none (it displays records; it changes no rule about them) |
@@ -32,6 +32,8 @@ LabRat's primary users are bench scientists (decision D7), but the UI they have 
 - Uploading raw instrument files (SPEC-012) and typing readings in by hand. Data still arrives through the instrument stream endpoint.
 - Any change to what an action does, who may do it or what is audited. Only how it is presented changes.
 - Charts of readings (SPEC-011).
+- An example-experiment generator for the Get-started guide (OQ 2: left out for now).
+- A Playwright test of the workflow (OQ 4: UAT covers it).
 
 ## 3. Requirements (EARS)
 
@@ -43,7 +45,8 @@ LabRat's primary users are bench scientists (decision D7), but the UI they have 
 | SPEC-025-R02 | The UI shall offer a light and a dark theme, follow the operating system's `prefers-color-scheme` by default (light when there is no preference), and let the user choose Light, Dark or System from the user menu, remembering the choice in that browser. | no | user need (bright labs) |
 | SPEC-025-R03 | Every text token shall have a contrast ratio of at least 4.5:1, and every UI-boundary or graph-fill token at least 3:1, against the background and surface tokens in both themes, with the ratios recorded beside the tokens. | no | WCAG 2.2 AA 1.4.3, 1.4.11 |
 | SPEC-025-R04 | The UI shall draw icons from one SVG icon set and shall never use emoji as icons. An icon beside visible text shall be hidden from assistive technology, and an icon-only button shall have an accessible name and a tooltip showing it. | no | accessibility |
-| SPEC-025-R05 | The UI shall load its fonts from the embedded assets with no request to another origin, using Fira Sans for text and Fira Code with tabular numerals for identifiers, digests and measured values. | no | air gap (D8), CSP (SPEC-005-R04) |
+| SPEC-025-R05 | The UI shall load its fonts from the embedded assets with no request to another origin, using Outfit for headings and the wordmark, Fira Sans for text, and Fira Code with tabular numerals for identifiers, digests and measured values. | no | air gap (D8), CSP (SPEC-005-R04) |
+| SPEC-025-R31 | The UI shall show the LabRat mark (`docs/logo.jpg`, redrawn as SVG) in the top bar, on the sign-in page and as the favicon, and shall take its brand colours from the mark's palette (design §3.0). | no | brand (OQ 5) |
 | SPEC-025-R06 | Wherever a run's state is shown, the UI shall show it with one status badge that combines the state's colour, its icon and the state word. | no | WCAG 1.4.1 (not colour alone) |
 | SPEC-025-R07 | While the user's system requests reduced motion, the UI shall show state changes without animation; otherwise transitions shall last 150–250 ms and animate only opacity and transform. | no | WCAG 2.3.3 |
 
@@ -106,8 +109,8 @@ None (no `Test: yes` requirements). The UAT plan must walk a new scientist from 
 
 | # | Question | Owner | Answer (date) |
 |---|---|---|---|
-| 1 | Accessible primitives for menus, dialogs, popovers, tooltips and the combobox: **React Aria Components** (recommended: Apache-2.0, stock, strong keyboard and screen-reader support, tree-shaken) or native HTML only (`<dialog>`, `popover`), with hand-written keyboard handling for menus? | Rob Bassett | |
-| 2 | Should the Get-started guide offer **Create an example experiment**? It would write a synthetic, clearly labelled experiment through the public API, so it would be audited like any other record. Recommended: only while `env` is `dev`. | Rob Bassett | |
-| 3 | Confirm merging the review and sign-off inboxes into one To-do view (R12). | Rob Bassett | |
-| 4 | Should the "empty tenant to signed run" golden path become a Playwright test? The testing policy says only business-critical rules get tests. Recommended: no; UAT covers it. | Rob Bassett | |
-| 5 | Confirm the visual direction in design §3: Swiss-minimal, navy primary with an amber accent, Fira Sans and Fira Code, light by default. | Rob Bassett | |
+| 1 | Accessible primitives for menus, dialogs, popovers, tooltips and the combobox: **React Aria Components** (recommended: Apache-2.0, stock, strong keyboard and screen-reader support, tree-shaken) or native HTML only (`<dialog>`, `popover`), with hand-written keyboard handling for menus? | Rob Bassett | React Aria Components (2026-11-06) |
+| 2 | Should the Get-started guide offer **Create an example experiment**? It would write a synthetic, clearly labelled experiment through the public API, so it would be audited like any other record. Recommended: only while `env` is `dev`. | Rob Bassett | Left out for now (2026-11-06); moved to Out of scope |
+| 3 | Confirm merging the review and sign-off inboxes into one To-do view (R12). | Rob Bassett | Yes (2026-11-06) |
+| 4 | Should the "empty tenant to signed run" golden path become a Playwright test? The testing policy says only business-critical rules get tests. Recommended: no; UAT covers it. | Rob Bassett | No (2026-11-06) |
+| 5 | Confirm the visual direction in design §3: Swiss-minimal, navy primary with an amber accent, Fira Sans and Fira Code, light by default. | Rob Bassett | Use `docs/logo.jpg` as the style seed (2026-11-06): the palette, shape language and heading font now come from the mark (design §3.0, R31) |

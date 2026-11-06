@@ -2,19 +2,19 @@
 
 Requirements: [requirements.md](requirements.md) · Design: [design.md](design.md)
 
-There are no `Test: yes` requirements, so there are no test tasks. Every UI task is verified with `cd web && npm run build` (type-check plus bundle) and a look in the running app (`go run ./cmd/server`, then `npm run dev`). Section references (§) point to [design.md](design.md). Once open question 1 is answered, task 1.5 follows that answer.
+There are no `Test: yes` requirements, so there are no test tasks. Every UI task is verified with `cd web && npm run build` (type-check plus bundle) and a look in the running app (`go run ./cmd/server`, then `npm run dev`). Section references (§) point to [design.md](design.md).
 
 ## Phase 1: Foundations
 
 - [ ] 1.1 Add dependencies
   - Requirements: SPEC-025-R04, R05
   - Files: `web/package.json`, `web/package-lock.json`
-  - Do: `npm install --save-exact lucide-react @fontsource/fira-sans @fontsource/fira-code react-aria-components` (drop the last if OQ 1 says native only). Commit only the manifest and lockfile changes.
+  - Do: `npm install --save-exact lucide-react @fontsource/outfit @fontsource/fira-sans @fontsource/fira-code react-aria-components`. Commit only the manifest and lockfile changes.
   - Verify: `npm run build` passes; gzipped bundle still under 1 MB (`du` on `web/dist/assets` after `gzip -k`)
 - [ ] 1.2 Design tokens and fonts
-  - Requirements: SPEC-025-R01, R02, R03, R05, R07
+  - Requirements: SPEC-025-R01, R02, R03, R05, R07, R31
   - Files: `web/src/tokens.css` (new), `web/src/main.tsx`
-  - Do: write every token in §3.1 with its ratio comment: light on `:root`, dark under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and again under `:root[data-theme="dark"]`, plus the reduced-motion block. Compute each badge pair (`color-mix` 12% of the state colour into `--surface`, state colour as text), record its ratio, and darken or lighten the text step until it is ≥4.5:1. In `main.tsx` import `@fontsource/fira-sans/latin-400.css`, `latin-500.css`, `latin-600.css`, `@fontsource/fira-code/latin-400.css`, then `./tokens.css` before `./styles.css`.
+  - Do: write every token in §3.1 (palette from the mark, §3.0) with its ratio comment: light on `:root`, dark under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and again under `:root[data-theme="dark"]`, plus the reduced-motion block. Compute each badge pair (`color-mix` 12% of the state colour into `--surface`, state colour as text), record its ratio, and darken or lighten the text step until it is ≥4.5:1. In `main.tsx` import `@fontsource/outfit/latin-500.css`, `latin-600.css`, `@fontsource/fira-sans/latin-400.css`, `latin-500.css`, `latin-600.css`, `@fontsource/fira-code/latin-400.css`, then `./tokens.css` before `./styles.css`.
   - Verify: build passes; DevTools Network shows fonts from the app's own origin only; toggling the OS theme switches colours
 - [ ] 1.3 Shared component styles
   - Requirements: SPEC-025-R01, R30
@@ -29,7 +29,7 @@ There are no `Test: yes` requirements, so there are no test tasks. Every UI task
 - [ ] 1.5 Interactive primitives
   - Requirements: SPEC-025-R04, R24, R30
   - Files: `web/src/ui.tsx` (new)
-  - Do: export styled `Dialog` (title, body, footer buttons, closes on Escape, returns focus), `Menu` and `MenuItem`, `Tooltip`, and `ComboBox` as thin wrappers over react-aria-components (or `<dialog>` and `popover` per OQ 1). No business logic.
+  - Do: export styled `Dialog` (title, body, footer buttons, closes on Escape, returns focus), `Menu` and `MenuItem`, `Tooltip`, and `ComboBox` as thin wrappers over react-aria-components. No business logic.
   - Verify: build passes; a Dialog opened from the keyboard traps focus and restores it on close
 - [ ] 1.6 Toasts and error messages
   - Requirements: SPEC-025-R19, R20
@@ -37,12 +37,18 @@ There are no `Test: yes` requirements, so there are no test tasks. Every UI task
   - Do: `toast(message, kind)` dispatches `labrat:toast`. `<Toasts/>` renders a `role="status"` stack bottom-right that dismisses success after 5 s (paused on hover or focus) and keeps errors until closed. `explain(err, action)` implements the table in §3.7 from `ApiError.status` (`TypeError` from `fetch` → network). `ErrorMessage({error, action})` renders title, what went wrong, what to do, then the server message in `.muted`. Mount `<Toasts/>` once in `Workspace`.
   - Verify: build passes; stopping the server and clicking a reload shows the network message
 
+- [ ] 1.7 The LabRat mark, favicon and illustrations
+  - Requirements: SPEC-025-R15, R31
+  - Files: `web/src/assets/labrat-mark.svg`, `web/public/favicon.svg`, `web/public/favicon-32.png`, `web/index.html`, `web/src/illustrations.tsx` (all new except `index.html`)
+  - Do: redraw the square mark from `docs/logo.jpg` as SVG (viewBox 0 0 100 100; circles, quarter-circle arcs, the head as one path; fills `#3A7B7D`, `#A7C2D3`, `#ACCECD`, and `currentColor` for the navy shapes; no background, no frame line). Compare it side by side with the JPG at 96 px and 16 px. Copy it as `favicon.svg`; crop the mark from the JPG to a 32 px PNG fallback. Link both in `index.html`. `illustrations.tsx` exports six 96 px `aria-hidden` SVG components (experiments, runs, inputs, data, todo, search) built only from circles, quarter-circles and squares in `var(--brand-teal)` and the two tints (§3.0); `EmptyState` takes one as its `icon`.
+  - Verify: build passes; favicon shows in the browser tab; mark legible in both themes at 24 px
+
 ## Phase 2: Shell
 
 - [ ] 2.1 Top bar and theme menu
-  - Requirements: SPEC-025-R02, R08
+  - Requirements: SPEC-025-R02, R08, R31
   - Files: `web/src/TopBar.tsx` (new), `web/src/App.tsx`
-  - Do: move the header out of `App.tsx` into `TopBar` as in the §3.3 sketch. The search button opens the palette (lift `paletteOpen` setter via a `labrat:palette` window event, as with problems). Leave New and To do as props filled by task 2.4. The user menu holds My account, Theme (Light, Dark, System: sets or removes `data-theme` on `document.documentElement`; `localStorage` `labrat.theme` in try/catch; applied in `main.tsx` before render to avoid a flash) and Sign out.
+  - Do: move the header out of `App.tsx` into `TopBar` as in the §3.3 sketch, led by the 24 px mark and the Outfit wordmark (R31). The search button opens the palette (lift `paletteOpen` setter via a `labrat:palette` window event, as with problems). Leave New and To do as props filled by task 2.4. The user menu holds My account, Theme (Light, Dark, System: sets or removes `data-theme` on `document.documentElement`; `localStorage` `labrat.theme` in try/catch; applied in `main.tsx` before render to avoid a flash) and Sign out.
   - Verify: build passes; theme choice survives reload
 - [ ] 2.2 Sidebar replaces the explorer
   - Requirements: SPEC-025-R09, R15
@@ -126,7 +132,7 @@ There are no `Test: yes` requirements, so there are no test tasks. Every UI task
 - [ ] 5.4 Account and admin
   - Requirements: SPEC-025-R17, R28
   - Files: `web/src/MeView.tsx`, `web/src/PrincipalsView.tsx`, `web/src/DelegationsView.tsx`, `web/src/SignIn.tsx`, `web/src/InstrumentView.tsx`
-  - Do: same component move; "principal" → "user or service account" in labels; Sign-in page gets the LabRat wordmark centred in a Card.
+  - Do: same component move; "principal" → "user or service account" in labels; Sign-in page: the mark at 96 px above the Outfit wordmark, centred in a Card on `--bg` (R31).
   - Verify: build passes
 - [ ] 5.5 Remove legacy styles
   - Requirements: SPEC-025-R01, R28
