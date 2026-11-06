@@ -79,30 +79,28 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) {
 		Kind  domain.NodeKind `json:"kind"`
 		Label string          `json:"label"`
 		Attrs map[string]any  `json:"attrs"`
-		// SchemaVersionID is optional: the version the attrs must match.
-		SchemaVersionID string `json:"schema_version_id"`
+		// SchemaVersionID is optional: the version the attrs must match. When
+		// present it must be a uuid; "" is refused, not read as "no schema".
+		SchemaVersionID *string `json:"schema_version_id"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if req.SchemaVersionID != "" && !validUUID(req.SchemaVersionID) {
+	if req.SchemaVersionID != nil && !validUUID(*req.SchemaVersionID) {
 		s.fail(w, r, badRequest("schema_version_id must be a uuid"))
 		return
 	}
 	var id string
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
-		id, err = insertSchemaNode(ctx, tx, p, req.Kind, req.Label, req.Attrs, req.SchemaVersionID)
+		id, err = insertSchemaNode(ctx, tx, p, req.Kind, req.Label, req.Attrs, deref(req.SchemaVersionID))
 		return err
 	})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	node := domain.Node{ID: id, Kind: req.Kind, Label: req.Label, Attrs: req.Attrs}
-	if req.SchemaVersionID != "" {
-		node.SchemaVersionID = &req.SchemaVersionID
-	}
+	node := domain.Node{ID: id, Kind: req.Kind, Label: req.Label, Attrs: req.Attrs, SchemaVersionID: req.SchemaVersionID}
 	writeJSON(w, http.StatusCreated, node)
 }
 

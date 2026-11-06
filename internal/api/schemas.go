@@ -670,3 +670,11 @@ func (s *Server) publishSchemaVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// deref returns *s, or "" when s is nil.
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}

@@ -218,7 +218,14 @@ The UI sample schema text used in cases 1, 2 and 8 (paste it as one line):
 - **Requirements:** SPEC-009-R03, SPEC-009-R12
 - **As:** scientist (alice), QA or lab manager for the database step
 - **Steps:**
-  1. Draft check: `curl -s -w ' [%{http_code}]\n' "${A[@]}" $API/lineage/nodes -d "{\"kind\":\"sample\",\"label\":\"X\",\"schema_version_id\":\"$D\",\"attrs\":{\"volume_ul\":1}}"` (`$D` is the draft `lab/sample` 1.1).
+  0. Set the ids in this shell, and check none is empty. An empty id is refused with `400`, so an unset variable can't pass as a schema-less node:
+     ```bash
+     D=$(curl -s "${A[@]}" $API/schemas/lab/sample | jq -r '.versions[] | select(.status=="draft") | .id' | head -1)
+     S=$(curl -s "${A[@]}" $API/schemas/lab/sample | jq -r '.versions[] | select(.status=="published") | .id' | head -1)
+     PV=$(curl -s "${A[@]}" $API/schemas/lab/qpcr-params | jq -r '.versions[] | select(.status=="published") | .id' | head -1)
+     echo "D=$D S=$S PV=$PV"
+     ```
+  1. Draft check: `curl -s -w ' [%{http_code}]\n' "${A[@]}" $API/lineage/nodes -d "{\"kind\":\"sample\",\"label\":\"X\",\"schema_version_id\":\"$D\",\"attrs\":{\"volume_ul\":1}}"` (`$D` is a draft `lab/sample` version).
   2. Kind check: same with `"kind":"reagent"` and `schema_version_id` `$S`.
   3. Params schema on a sample: same with `"kind":"sample"` and `schema_version_id` `$PV`.
   4. Database, as the owner: `docker compose exec postgres psql -U lde -c "BEGIN; UPDATE lineage_nodes SET schema_version_id = NULL WHERE schema_version_id IS NOT NULL; ROLLBACK;"` and another statement setting `schema_version_id` to `$PV`'s id (any other value).

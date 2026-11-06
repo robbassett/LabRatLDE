@@ -35,7 +35,9 @@ type changeItem struct {
 	To            string          `json:"to,omitempty"`
 	Relation      domain.Relation `json:"relation,omitempty"`
 	// SchemaVersionID is for add_node: the version its attrs must match.
-	SchemaVersionID string `json:"schema_version_id,omitempty"`
+	// A pointer, so "" is refused rather than read as "no schema". nil is
+	// omitted, which keeps the items_sha256 of change sets without it.
+	SchemaVersionID *string `json:"schema_version_id,omitempty"`
 }
 
 // validate checks an item's fields for its op, so nothing malformed reaches
@@ -83,7 +85,7 @@ func (it changeItem) validate() error {
 		if it.Label == nil || strings.TrimSpace(*it.Label) == "" {
 			return badRequest("add_node needs a label")
 		}
-		if it.SchemaVersionID != "" && !validUUID(it.SchemaVersionID) {
+		if it.SchemaVersionID != nil && !validUUID(*it.SchemaVersionID) {
 			return badRequest("schema_version_id must be a uuid")
 		}
 	case "add_edge":
@@ -188,7 +190,7 @@ func applyItem(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string,
 		return updateRecord(ctx, tx, p, csID, reason, "note", it.NoteID,
 			`UPDATE notes SET body = $2 WHERE id = $1`, it.NoteID, it.Body)
 	case "add_node":
-		_, err := insertSchemaNode(ctx, tx, p, it.Kind, *it.Label, it.Attrs, it.SchemaVersionID)
+		_, err := insertSchemaNode(ctx, tx, p, it.Kind, *it.Label, it.Attrs, deref(it.SchemaVersionID))
 		return err
 	case "add_edge":
 		return insertEdge(ctx, tx, p, domain.Edge{From: it.From, To: it.To, Relation: it.Relation})
