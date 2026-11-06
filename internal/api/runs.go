@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -276,6 +277,69 @@ func (s *Server) listExperimentRuns(w http.ResponseWriter, r *http.Request) {
 			items[i].Signatures = sigs[items[i].ID]
 		}
 		return nil
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var last string
+	if n := len(items); n > 0 {
+		last = items[n-1].ID
+	}
+	writeJSON(w, http.StatusOK, page{Items: items, NextCursor: nextCursor(len(items), limit, last)})
+}
+
+// listRuns lists the tenant's runs across experiments, newest first, for the
+// UI's Home view (SPEC-025-R16). Read-only: no audit event.
+//
+//	GET /v1/runs?state=running,paused&limit=20&cursor=<id>
+func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	cursor, limit, err := readPage(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var states []string
+	if q := r.URL.Query().Get("state"); q != "" {
+		for _, st := range strings.Split(q, ",") {
+			if !domain.RunState(st).Valid() {
+				s.fail(w, r, badRequest("unknown state %q", st))
+				return
+			}
+			states = append(states, st)
+		}
+	}
+	type summary struct {
+		ID             string    `json:"id"`
+		Label          string    `json:"label"`
+		State          string    `json:"state"`
+		CreatedAt      time.Time `json:"created_at"`
+		ExperimentID   string    `json:"experiment_id"`
+		ExperimentSlug string    `json:"experiment_slug"`
+	}
+	items := []summary{}
+	err = s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT r.id, n.label, r.state, r.created_at, e.id, e.slug FROM runs r
+			JOIN lineage_nodes n ON n.id = r.node_id
+			JOIN experiments e ON e.id = r.experiment_id
+			WHERE ($1::text[] IS NULL OR r.state = ANY($1::text[]))
+			  AND ($2::text = '' OR (r.created_at, r.id) < (SELECT created_at, id FROM runs WHERE id = NULLIF($2::text, '')::uuid))
+			ORDER BY r.created_at DESC, r.id DESC
+			LIMIT $3`, states, cursor, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var run summary
+			if err := rows.Scan(&run.ID, &run.Label, &run.State, &run.CreatedAt, &run.ExperimentID, &run.ExperimentSlug); err != nil {
+				return err
+			}
+			items = append(items, run)
+		}
+		return rows.Err()
 	})
 	if err != nil {
 		s.fail(w, r, err)

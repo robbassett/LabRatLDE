@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { DEV_TENANT, setSession, type Meta } from './api';
 import { beginSignIn } from './auth';
+import Field from './Field';
+import LabRatMark from './LabRatMark';
 
 type Props = { meta: Meta; message: string | null; onDevSignIn: (actor: string) => void };
 
@@ -8,11 +10,14 @@ type Props = { meta: Meta; message: string | null; onDevSignIn: (actor: string) 
 // server trusts the tenant and actor headers this form stores.
 export default function SignIn({ meta, message, onDevSignIn }: Props) {
   return (
-    <div className="signin">
-      <h1>Sign in</h1>
-      {message && <p role="status">{message}</p>}
-      {meta.env === 'prod' ? <OIDCSignIn meta={meta} /> : <DevSignIn onSignIn={onDevSignIn} />}
-    </div>
+    <main className="signin">
+      <div className="card signin-card">
+        <LabRatMark size={96} />
+        <h1>Sign in to LabRat</h1>
+        {message && <p role="status">{message}</p>}
+        {meta.env === 'prod' ? <OIDCSignIn meta={meta} /> : <DevSignIn onSignIn={onDevSignIn} />}
+      </div>
+    </main>
   );
 }
 
@@ -36,7 +41,7 @@ function OIDCSignIn({ meta }: { meta: Meta }) {
   return (
     <>
       <p className="muted">You'll sign in with your organisation's account.</p>
-      <button type="button" onClick={go} disabled={busy}>
+      <button type="button" className="btn btn-primary" onClick={go} disabled={busy}>
         {busy ? 'Redirecting…' : 'Sign in with your organisation'}
       </button>
       {error && <p role="alert">{error}</p>}
@@ -59,12 +64,18 @@ function DevSignIn({ onSignIn }: { onSignIn: (actor: string) => void }) {
 
   return (
     <form onSubmit={submit}>
-      <p className="muted">Development server: your tenant and handle are sent as headers. A new handle gets every role.</p>
-      <label htmlFor="tenant">Tenant</label>
-      <input id="tenant" value={tenant} onChange={(e) => setTenant(e.target.value)} required />
-      <label htmlFor="actor">Handle</label>
-      <input id="actor" value={actor} onChange={(e) => setActor(e.target.value)} autoComplete="username" required />
-      <button type="submit">Sign in</button>
+      <p className="muted" style={{ margin: 0 }}>
+        Development server: your tenant and handle are sent as headers. A new handle gets every role.
+      </p>
+      <Field label="Tenant">
+        <input className="mono" value={tenant} onChange={(e) => setTenant(e.target.value)} required />
+      </Field>
+      <Field label="Handle">
+        <input value={actor} onChange={(e) => setActor(e.target.value)} autoComplete="username" required />
+      </Field>
+      <button type="submit" className="btn btn-primary">
+        Sign in
+      </button>
     </form>
   );
 }

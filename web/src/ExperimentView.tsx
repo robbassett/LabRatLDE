@@ -1,44 +1,39 @@
-import MarkdownIt from 'markdown-it';
+import { GitBranch, Plus } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   blame,
   editExperimentTitle,
   getExperiment,
-  getMe,
-  getProtocolVersion,
   listProtocolVersions,
+  listRuns,
   setSigningPolicy,
   type Experiment,
   type Me,
   type PolicyStep,
   type ProtocolVersion,
   type Role,
+  type RunSummary,
 } from './api';
-import { lineDiff, type DiffLine } from './diff';
 import EditField from './EditField';
-import NewRunForm from './NewRunForm';
+import EmptyState from './EmptyState';
+import ErrorMessage from './ErrorMessage';
+import { openNew } from './events';
+import { STATE_WORD } from './glossary';
+import { RunsArt } from './illustrations';
+import { hasRole, loadMe, useMe } from './me';
+import ProtocolEditor, { md, stripFrontmatter } from './ProtocolEditor';
+import RecordDetails from './RecordDetails';
+import StatusBadge from './StatusBadge';
 import { tabKey, type Tab } from './tabs';
-
-// HTML is disabled, so rendered output cannot contain author-supplied markup.
-const md = new MarkdownIt({ html: false, linkify: false });
+import { toast } from './Toasts';
+import { Tab as ViewTab, TabList, TabPanel, Tabs } from './ui';
 
 type Props = { id: string; open: (t: Tab) => void; rename: (key: string, title: string) => void };
 
 type State =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; exp: Experiment; versions: ProtocolVersion[]; changed: boolean };
-
-function show(v: unknown): string {
-  return typeof v === 'string' ? v : JSON.stringify(v);
-}
-
-// Drops a leading YAML frontmatter block; the metadata table already shows it.
-function stripFrontmatter(text: string): string {
-  const t = text.replace(/^﻿/, '').replace(/\r\n/g, '\n');
-  const m = /^---\n[\s\S]*?\n---[ \t]*(\n|$)/.exec(t);
-  return m ? t.slice(m[0].length) : t;
-}
+  | { status: 'error'; error: unknown }
+  | { status: 'ready'; exp: Experiment; versions: ProtocolVersion[]; runs: RunSummary[]; moreRuns: boolean; changed: boolean };
 
 // The v1 meanings and the roles a step may require (SPEC-008 design section 2).
 const MEANINGS = ['author', 'review', 'approval', 'verification'];
@@ -51,10 +46,6 @@ function canEditPolicy(me: Me): boolean {
   return me.roles.some((g) => !g.revoked_at && allowed.includes(g.role));
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 // PolicySection shows the signing steps. Users the tenant's mode allows get a form to change them,
 // which needs a reason and sends the steps renumbered from 1.
 function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promise<void> }) {
@@ -62,14 +53,14 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
   const [editing, setEditing] = useState(false);
   const [steps, setSteps] = useState<PolicyStep[]>([]);
   const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const wasEditing = useRef(false);
 
   useEffect(() => {
     let live = true;
-    getMe()
+    loadMe()
       .then((m) => live && setMe(m))
       .catch(() => {});
     return () => {
@@ -116,9 +107,10 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
       await setSigningPolicy(exp.id, steps.map((p, i) => ({ ...p, step: i + 1 })), reason.trim());
       await onSaved();
       setEditing(false);
+      toast('Signing policy saved');
       window.dispatchEvent(new CustomEvent('labrat:revised'));
     } catch (err: unknown) {
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setSaving(false);
     }
@@ -126,9 +118,9 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
 
   return (
     <section aria-labelledby="policy-heading">
-      <h2 id="policy-heading">Signing policy</h2>
+      <h2 id="policy-heading" style={{ marginTop: 0 }}>Signing policy</h2>
       <p className="muted">Runs copy this policy when they are created. Changing it does not affect existing runs.</p>
-      <table className="data">
+      <table className="table" style={{ maxWidth: '32rem' }}>
         <caption className="sr-only">Signing policy steps</caption>
         <thead>
           <tr>
@@ -149,7 +141,7 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
       </table>
       {!editing && me && canEditPolicy(me) && (
         <p>
-          <button type="button" ref={editButton} onClick={startEdit}>
+          <button type="button" className="btn" ref={editButton} onClick={startEdit}>
             Edit signing policy
           </button>
         </p>
@@ -201,13 +193,9 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
             Reason
             <input value={reason} onChange={(e) => setReason(e.target.value)} disabled={saving} required />
           </label>
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
+          <ErrorMessage error={error} action="save the signing policy" />
           <div className="actions">
-            <button type="submit" disabled={saving || reason.trim() === ''}>
+            <button type="submit" className="btn btn-primary" disabled={saving || reason.trim() === ''}>
               Save signing policy
             </button>
             <button type="button" onClick={() => setEditing(false)} disabled={saving}>
@@ -220,41 +208,42 @@ function PolicySection({ exp, onSaved }: { exp: Experiment; onSaved: () => Promi
   );
 }
 
-type Diff = { status: 'idle' } | { status: 'error'; message: string } | { status: 'done'; lines: DiffLine[] };
+function show(v: unknown): string {
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
 
+async function load(id: string) {
+  const [exp, versions, b, runs] = await Promise.all([getExperiment(id), listProtocolVersions(id), blame('experiment', id), listRuns(id)]);
+  return { exp, versions, runs: runs.items, moreRuns: runs.next_cursor !== null, changed: b.fields.some((f) => f.rev > 1) };
+}
+
+// ExperimentView (SPEC-025-R22): Overview (runs and protocol), Protocol
+// (editor, versions, diff) and Settings (signing policy).
 export default function ExperimentView({ id, open, rename }: Props) {
+  const me = useMe();
   const [state, setState] = useState<State>({ status: 'loading' });
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [diff, setDiff] = useState<Diff>({ status: 'idle' });
+  const [tab, setTab] = useState<string>('overview');
 
   useEffect(() => {
     let live = true;
     setState({ status: 'loading' });
-    Promise.all([getExperiment(id), listProtocolVersions(id), blame('experiment', id)])
-      .then(([exp, versions, b]) => {
+    load(id)
+      .then((d) => {
         if (!live) return;
-        setState({ status: 'ready', exp, versions, changed: b.fields.some((f) => f.rev > 1) });
-        const sorted = [...versions].sort((p, q) => p.version - q.version);
-        const cur = sorted.find((v) => v.id === exp.protocol_version_id) ?? sorted[sorted.length - 1];
-        const prev = [...sorted].reverse().find((v) => cur && v.version < cur.version) ?? cur;
-        setFrom(prev?.id ?? '');
-        setTo(cur?.id ?? '');
-        setDiff({ status: 'idle' });
-        rename(tabKey({ kind: 'experiment', id }), exp.slug);
+        setState({ status: 'ready', ...d });
+        rename(tabKey({ kind: 'experiment', id }), d.exp.slug);
       })
-      .catch((err: unknown) => {
-        if (live) setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
-      });
+      .catch((error: unknown) => live && setState({ status: 'error', error }));
     return () => {
       live = false;
     };
   }, [id, rename]);
 
   if (state.status === 'loading') return <p className="muted">Loading experiment…</p>;
-  if (state.status === 'error') return <p role="alert" className="error">{state.message}</p>;
+  if (state.status === 'error') return <ErrorMessage error={state.error} action="load the experiment" />;
 
-  const { exp, versions, changed } = state;
+  const { exp, versions, runs, moreRuns, changed } = state;
+  const canCreate = hasRole(me, 'scientist');
   const current =
     versions.find((v) => v.id === exp.protocol_version_id) ??
     versions.reduce<ProtocolVersion | undefined>((a, v) => (!a || v.version > a.version ? v : a), undefined);
@@ -262,151 +251,162 @@ export default function ExperimentView({ id, open, rename }: Props) {
     exp.protocol_meta && typeof exp.protocol_meta === 'object' && !Array.isArray(exp.protocol_meta)
       ? Object.entries(exp.protocol_meta as Record<string, unknown>)
       : [];
+  const counts = runs.reduce<Record<string, number>>((m, r) => ({ ...m, [r.state]: (m[r.state] ?? 0) + 1 }), {});
 
-  // reload fetches the experiment again after an edit, and whether any field has been revised.
+  // reload fetches everything again after an edit.
   async function reload() {
-    const [next, b] = await Promise.all([getExperiment(id), blame('experiment', id)]);
-    setState((s) => (s.status === 'ready' ? { ...s, exp: next, changed: b.fields.some((f) => f.rev > 1) } : s));
+    const d = await load(id);
+    setState({ status: 'ready', ...d });
   }
-
-  const compare = () => {
-    Promise.all([getProtocolVersion(from), getProtocolVersion(to)])
-      .then(([a, b]) => setDiff({ status: 'done', lines: lineDiff(a.protocol_md ?? '', b.protocol_md ?? '') }))
-      .catch((err: unknown) =>
-        setDiff({ status: 'error', message: err instanceof Error ? err.message : String(err) }),
-      );
-  };
 
   return (
     <article className="view">
-      <div className="view-title">
-        <EditField
-          label="Title"
-          value={exp.title}
-          changed={changed}
-          onSave={async (value, reason) => {
-            await editExperimentTitle(id, value, reason);
-            await reload();
-          }}
-        />
-      </div>
-      <p className="muted">
-        <span className="mono">{exp.slug}</span>
-      </p>
-      <p>
-        Version {exp.protocol_version} <span className="mono hash">{exp.protocol_sha256}</span>
-      </p>
-      {current && (
-        <p>
-          <button
-            type="button"
-            onClick={() => open({ kind: 'lineage', id: current.node_id, title: `${exp.slug} v${current.version}` })}
-          >
-            Open lineage
-          </button>
-        </p>
-      )}
-
-      <NewRunForm exp={exp} open={open} />
-
-      <h2>Protocol</h2>
-      <div className="protocol" dangerouslySetInnerHTML={{ __html: md.render(stripFrontmatter(exp.protocol_md)) }} />
-
-      <h2>Metadata</h2>
-      {meta.length === 0 ? (
-        <p className="muted">No metadata.</p>
-      ) : (
-        <table className="data">
-          <caption className="sr-only">Protocol metadata</caption>
-          <thead>
-            <tr>
-              <th scope="col">Key</th>
-              <th scope="col">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {meta.map(([k, v]) => (
-              <tr key={k}>
-                <th scope="row">{k}</th>
-                <td className="mono">{show(v)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <PolicySection exp={exp} onSaved={reload} />
-
-      <h2>Versions</h2>
-      <table className="data">
-        <caption className="sr-only">Protocol versions</caption>
-        <thead>
-          <tr>
-            <th scope="col">Version</th>
-            <th scope="col">Hash</th>
-            <th scope="col">Created by</th>
-            <th scope="col">Created at</th>
-          </tr>
-        </thead>
-        <tbody>
-          {versions.map((v) => (
-            <tr key={v.id}>
-              <td>{v.version}</td>
-              <td className="mono">{v.sha256.slice(0, 12)}</td>
-              <td>{v.created_by}</td>
-              <td>{v.created_at}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2>Compare versions</h2>
-      {versions.length < 2 ? (
-        <p className="muted">Needs two versions</p>
-      ) : (
-        <div className="diff-controls">
-          <label>
-            From version
-            <select value={from} onChange={(e) => setFrom(e.target.value)}>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  v{v.version}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            To version
-            <select value={to} onChange={(e) => setTo(e.target.value)}>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  v{v.version}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="button" onClick={compare}>
-            Compare
-          </button>
-        </div>
-      )}
-      {diff.status === 'error' && (
-        <p role="alert" className="error">
-          {diff.message}
-        </p>
-      )}
-      {diff.status === 'done' &&
-        (diff.lines.every((l) => l.op === ' ') ? (
-          <p>No differences</p>
-        ) : (
-          <pre className="diff" aria-label="Protocol diff">
-            {diff.lines.map((l, i) => (
-              <span key={i} className={l.op === '+' ? 'diff-add' : l.op === '-' ? 'diff-del' : undefined}>
-                {l.op + ' ' + l.line}
+      <div className="view-head">
+        <div style={{ flex: '1 1 24rem', minWidth: 0 }}>
+          <div className="view-title">
+            <EditField
+              label="Title"
+              value={exp.title}
+              changed={changed}
+              onSave={async (value, reason) => {
+                await editExperimentTitle(id, value, reason);
+                toast('Title saved');
+                await reload();
+              }}
+            />
+          </div>
+          <p className="subtitle">
+            <span className="mono">{exp.slug}</span> · protocol v{exp.protocol_version} · {runs.length}
+            {moreRuns ? '+' : ''} {runs.length === 1 ? 'run' : 'runs'}
+            {Object.entries(counts).map(([s, n]) => (
+              <span key={s}>
+                {' '}
+                · {n} {STATE_WORD[s as keyof typeof STATE_WORD].toLowerCase()}
               </span>
             ))}
-          </pre>
-        ))}
+          </p>
+        </div>
+        <div className="actions">
+          {current && (
+            <button type="button" className="btn" onClick={() => open({ kind: 'lineage', id: current.node_id, title: `${exp.slug} v${current.version}` })}>
+              <GitBranch size={16} aria-hidden="true" /> Open lineage
+            </button>
+          )}
+          {canCreate && (
+            <button type="button" className="btn btn-primary" onClick={() => openNew('run', exp.id)}>
+              <Plus size={16} aria-hidden="true" /> Plan run
+            </button>
+          )}
+        </div>
+      </div>
+
+      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))}>
+        <TabList aria-label="Experiment sections">
+          <ViewTab id="overview">Overview</ViewTab>
+          <ViewTab id="protocol">Protocol</ViewTab>
+          <ViewTab id="settings">Settings</ViewTab>
+        </TabList>
+
+        <TabPanel id="overview">
+          <section className="card" aria-labelledby="runs-heading" style={{ marginBottom: 'var(--space-4)' }}>
+            <div className="card-head">
+              <h2 id="runs-heading">Runs</h2>
+            </div>
+            {runs.length === 0 ? (
+              <EmptyState
+                icon={<RunsArt />}
+                text="No runs yet. A run is one execution of this protocol: plan one when you're ready to work at the bench."
+                action={
+                  canCreate && (
+                    <button type="button" className="btn btn-primary" onClick={() => openNew('run', exp.id)}>
+                      Plan run
+                    </button>
+                  )
+                }
+              />
+            ) : (
+              <div className="table-wrap">
+                <table className="table">
+                  <caption className="sr-only">Runs of this experiment</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Run</th>
+                      <th scope="col">State</th>
+                      <th scope="col">Signatures</th>
+                      <th scope="col">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...runs].reverse().map((r) => (
+                      <tr key={r.id}>
+                        <td>
+                          <button type="button" className="row-link" onClick={() => open({ kind: 'run', id: r.id, title: r.label })}>
+                            {r.label}
+                          </button>
+                        </td>
+                        <td>
+                          <StatusBadge state={r.state} />
+                        </td>
+                        <td className="mono">
+                          {r.signatures.filter((s) => s.valid).length} of {r.signing_policy.length}
+                        </td>
+                        <td className="mono">{r.created_at.slice(0, 16).replace('T', ' ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {moreRuns && <p className="muted">Showing the first {runs.length} runs. The sidebar loads the rest.</p>}
+          </section>
+
+          <section className="card" aria-labelledby="protocol-heading">
+            <div className="card-head">
+              <h2 id="protocol-heading">Protocol v{exp.protocol_version}</h2>
+              <button type="button" className="btn btn-link" onClick={() => setTab('protocol')}>
+                Edit protocol
+              </button>
+            </div>
+            <div className="protocol" dangerouslySetInnerHTML={{ __html: md.render(stripFrontmatter(exp.protocol_md)) }} />
+            {meta.length > 0 && (
+              <>
+                <h3 style={{ margin: 'var(--space-4) 0 var(--space-2)' }}>Metadata</h3>
+                <table className="data">
+                  <caption className="sr-only">Protocol metadata</caption>
+                  <tbody>
+                    {meta.map(([k, v]) => (
+                      <tr key={k}>
+                        <th scope="row">{k}</th>
+                        <td className="mono">{show(v)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </section>
+        </TabPanel>
+
+        <TabPanel id="protocol">
+          <ProtocolEditor exp={exp} versions={versions} canEdit={canCreate} onSaved={reload} />
+        </TabPanel>
+
+        <TabPanel id="settings">
+          <div className="card">
+            <PolicySection exp={exp} onSaved={reload} />
+          </div>
+        </TabPanel>
+      </Tabs>
+
+      <RecordDetails
+        rows={[
+          { label: 'Experiment ID', value: exp.id },
+          { label: 'Protocol version ID', value: exp.protocol_version_id },
+          { label: 'Protocol fingerprint (SHA-256)', value: exp.protocol_sha256, term: 'protocol_sha256' },
+          { label: 'Protocol item ID (lineage)', value: current?.node_id, term: 'lineage node id' },
+          { label: 'Created by', value: `${exp.created_by} · ${exp.created_at.slice(0, 16).replace('T', ' ')}` },
+        ]}
+      />
     </article>
   );
 }

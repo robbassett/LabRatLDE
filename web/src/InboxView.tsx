@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import EmptyState from './EmptyState';
+import ErrorMessage from './ErrorMessage';
+import { ToDoArt } from './illustrations';
+import { loadMe } from './me';
+import { toast } from './Toasts';
 import {
   ApiError,
   decideChangeSet,
   getChangeSet,
-  getMe,
   listChangeSets,
   type ChangeItem,
   type ChangeSetDetail,
@@ -14,19 +18,16 @@ import {
 type Decision = 'commit' | 'reject' | 'withdraw';
 
 const GROUPS: { source: ChangeSetSource; heading: string }[] = [
-  { source: 'human', heading: 'Human' },
-  { source: 'parser', heading: 'Parser' },
-  { source: 'agent', heading: 'Agent' },
+  { source: 'human', heading: 'From people' },
+  { source: 'parser', heading: 'From instrument parsers' },
+  { source: 'agent', heading: 'From agents' },
 ];
 
 // CREATING lists the ops that add a record. They show as a one-line summary, not a field table.
 const CREATING = new Set<ChangeItem['op']>(['add_node', 'add_edge', 'add_note']);
 
 const DECISION_LABEL: Record<Decision, string> = { commit: 'Commit', reject: 'Reject', withdraw: 'Withdraw' };
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const DECIDED: Record<Decision, string> = { commit: 'committed', reject: 'rejected', withdraw: 'withdrawn' };
 
 // allProposed reads every page of proposed change sets, following next_cursor until it is null.
 async function allProposed(): Promise<ChangeSetSummary[]> {
@@ -119,10 +120,10 @@ type CardProps = { summary: ChangeSetSummary; actor: string | null; onDecided: (
 function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<ChangeSetDetail | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<unknown>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [changedNotice, setChangedNotice] = useState<string | null>(null);
 
@@ -138,7 +139,7 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
     if (next && !detail && !detailError) {
       getChangeSet(summary.id)
         .then(setDetail)
-        .catch((err: unknown) => setDetailError(errorMessage(err)));
+        .catch((err: unknown) => setDetailError(err));
     }
   }
 
@@ -159,6 +160,7 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
       await decideChangeSet(summary.id, decision, reason.trim(), decision === 'commit' ? detail?.items_sha256 : undefined);
       // A commit changes records, so the open views should reload their values.
       if (decision === 'commit') window.dispatchEvent(new CustomEvent('labrat:revised'));
+      toast(`Change request "${summary.title}" ${DECIDED[decision]}`);
       setDecision(null);
       onDecided();
     } catch (err: unknown) {
@@ -170,14 +172,14 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
           setDetail(fresh);
           if (stale) {
             setDecision(null);
-            setChangedNotice('The items changed since you opened this change set. Read the reloaded items, then commit again.');
+            setChangedNotice('The items changed since you opened this change request. Read the reloaded items, then commit again.');
             return;
           }
         } catch {
           // Fall through to the server's message.
         }
       }
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setSaving(false);
     }
@@ -198,11 +200,7 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
 
       {open && (
         <div id={panel} className="inbox-panel">
-          {detailError && (
-            <p role="alert" className="error">
-              {detailError}
-            </p>
-          )}
+          <ErrorMessage error={detailError} action="load the change request" />
           {!detail && !detailError && <p className="muted">Loading items…</p>}
           {detail && (
             <ol className="inbox-items">
@@ -232,11 +230,11 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
           {decision === null ? (
             <div className="actions">
               {detail && !hideCommit && (
-                <button type="button" aria-label={`Commit ${summary.title}`} onClick={() => choose('commit')}>
+                <button type="button" className="btn btn-primary" aria-label={`Commit ${summary.title}`} onClick={() => choose('commit')}>
                   Commit
                 </button>
               )}
-              <button type="button" aria-label={`Reject ${summary.title}`} onClick={() => choose('reject')}>
+              <button type="button" className="btn btn-danger" aria-label={`Reject ${summary.title}`} onClick={() => choose('reject')}>
                 Reject
               </button>
               {isAuthor && (
@@ -251,13 +249,9 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
                 Reason to {decision}
                 <input value={reason} onChange={(e) => setReason(e.target.value)} disabled={saving} required autoFocus />
               </label>
-              {error && (
-                <p role="alert" className="error">
-                  {error}
-                </p>
-              )}
+              <ErrorMessage error={error} action={`${decision} the change request`} />
               <div className="actions">
-                <button type="submit" disabled={saving || reason.trim() === ''}>
+                <button type="submit" className={decision === 'commit' ? 'btn btn-primary' : 'btn btn-danger'} disabled={saving || reason.trim() === ''}>
                   Confirm {DECISION_LABEL[decision].toLowerCase()}
                 </button>
                 <button type="button" onClick={() => setDecision(null)} disabled={saving}>
@@ -272,22 +266,23 @@ function ChangeSetCard({ summary, actor, onDecided }: CardProps) {
   );
 }
 
-// InboxView lists proposed change sets, grouped by who proposed them. It is a singleton tab (SPEC-007, section 3).
+// InboxView lists proposed change requests, grouped by who proposed them. It is the Review
+// changes section of the To-do view (SPEC-007 §3, SPEC-025-R12).
 export default function InboxView() {
   // items is null until the first load completes.
   const [items, setItems] = useState<ChangeSetSummary[] | null>(null);
   const [actor, setActor] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
+  const [error, setError] = useState<unknown>(null);
+  const heading = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     let live = true;
     allProposed()
       .then((xs) => live && setItems(xs))
-      .catch((err: unknown) => live && setError(errorMessage(err)));
-    getMe()
+      .catch((err: unknown) => live && setError(err));
+    loadMe()
       .then((me) => live && setActor(me.actor))
-      .catch((err: unknown) => live && setError(errorMessage(err)));
+      .catch((err: unknown) => live && setError(err));
     return () => {
       live = false;
     };
@@ -299,46 +294,40 @@ export default function InboxView() {
         setItems(xs);
         setError(null);
       })
-      .catch((err: unknown) => setError(errorMessage(err)));
+      .catch((err: unknown) => setError(err));
   }
 
-  // After a decision the list reloads, and focus moves to the heading so it is not lost with the card.
+  // After a decision the list reloads, and focus moves to the intro so it is not lost with the card.
   function decided() {
     reload();
     heading.current?.focus();
   }
 
   return (
-    <article className="view inbox">
-      <h1 ref={heading} tabIndex={-1}>
-        Review inbox
-      </h1>
-      <p className="muted">Proposed changes waiting for a decision.</p>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      {items === null && !error && <p className="muted">Loading proposals…</p>}
+    <section aria-label="Review changes" className="inbox">
+      <p ref={heading} tabIndex={-1} className="muted">
+        Proposed changes to records, waiting for a decision. Open one to see each change beside the current value.
+      </p>
+      <ErrorMessage error={error} action="load change requests" />
+      {items === null && !error && <p className="muted">Loading change requests…</p>}
+      {items !== null && items.length === 0 && <EmptyState icon={<ToDoArt />} text="No change requests are waiting. Proposed corrections and agent edits appear here." />}
 
       {items !== null &&
+        items.length > 0 &&
         GROUPS.map(({ source, heading: title }) => {
           const group = items.filter((s) => s.source === source);
+          if (group.length === 0) return null;
           return (
             <section key={source} aria-labelledby={`inbox-${source}`}>
               <h2 id={`inbox-${source}`}>{title}</h2>
-              {group.length === 0 ? (
-                <p className="muted">None.</p>
-              ) : (
-                <ul className="inbox-list">
-                  {group.map((s) => (
-                    <ChangeSetCard key={s.id} summary={s} actor={actor} onDecided={decided} />
-                  ))}
-                </ul>
-              )}
+              <ul className="inbox-list">
+                {group.map((s) => (
+                  <ChangeSetCard key={s.id} summary={s} actor={actor} onDecided={decided} />
+                ))}
+              </ul>
             </section>
           );
         })}
-    </article>
+    </section>
   );
 }
