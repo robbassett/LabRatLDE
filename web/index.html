@@ -8,6 +8,9 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/favicon-32.png" />
   </head>
   <body>
+    <!-- React Aria injects an inline <style> (blocked by the CSP) unless an element with this id
+         exists; components.css carries the same touch-action rule instead. -->
+    <template id="react-aria-pressable-style"></template>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

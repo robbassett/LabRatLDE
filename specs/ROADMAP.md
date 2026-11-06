@@ -33,7 +33,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-022 | [Validation agents](SPEC-022-validation-agents/requirements.md) | Draft |
 | SPEC-023 | [Review hardening](implemented/SPEC-023-review-hardening/requirements.md) | Implemented |
 | SPEC-024 | [Standards-aligned starter schemas](SPEC-024-starter-schemas/requirements.md) | Draft (brief) |
-| SPEC-025 | [UI/UX refresh: design system and the scientist's workflow](SPEC-025-ux-refresh/requirements.md) | Approved (in progress, before SPEC-010) |
+| SPEC-025 | [UI/UX refresh: design system and the scientist's workflow](SPEC-025-ux-refresh/requirements.md) | Built, awaiting verifier and UAT (before SPEC-010) |
 
 **SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008), `LDE08` validation draft item without a current decision (SPEC-022).
 

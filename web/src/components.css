@@ -654,6 +654,11 @@ label {
 
 /* ---------- React Aria overlays (ui.tsx) ---------- */
 
+/* The rule React Aria would inject at runtime (see index.html): no double-tap zoom delay on pressables. */
+[data-react-aria-pressable] {
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
