@@ -23,6 +23,7 @@ const (
 	CodeAppendOnly    = "LDE03"
 	CodeSealed        = "LDE04"
 	CodeRoleDenied    = "LDE05"
+	CodeSchemaRef     = "LDE06"
 	CodeSignature     = "LDE07"
 	codeUniqueViolate = "23505"
 	codeFKViolation   = "23503"
@@ -129,6 +130,9 @@ func IsInvalid(err error) bool { return ErrorCode(err) == codeCheckViolate }
 
 // IsRoleDenied reports that the acting principal lacks a role (LDE05).
 func IsRoleDenied(err error) bool { return ErrorCode(err) == CodeRoleDenied }
+
+// IsBadSchemaRef reports a reference to a schema version that is missing, unpublished or of the wrong kind (LDE06).
+func IsBadSchemaRef(err error) bool { return ErrorCode(err) == CodeSchemaRef }
 
 // ErrorMessage is the Postgres message without SQLSTATE decoration, or
 // err.Error() for other errors.

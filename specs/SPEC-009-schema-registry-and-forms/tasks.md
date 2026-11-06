@@ -68,7 +68,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
 
 ## Phase 3: API
 
-- [ ] 3.1 Errors
+- [x] 3.1 Errors
   - Requirements: SPEC-009-R03, SPEC-009-R05
   - Files: `internal/storage/postgres.go`, `internal/api/server.go`, `internal/api/schemas.go` (new)
   - Do:
@@ -76,7 +76,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - In `schemas.go`: `type schemaInvalid struct { subject string; problems []domain.SchemaProblem }`, whose `Error()` is the design's `error` text (`<subject>: <pointer> <message>; …`).
     - In `fail`: a `*schemaInvalid` case, before the others, writing `{error, errors}` with status 422, and an `IsBadSchemaRef` case writing 422 with `storage.ErrorMessage(err)`.
   - Verify: `go build ./...`.
-- [ ] 3.2 Schema endpoints
+- [x] 3.2 Schema endpoints
   - Requirements: SPEC-009-R11 (API side)
   - Files: `internal/api/schemas.go`, `internal/api/server.go`
   - Do: `POST /v1/schemas`, `GET /v1/schemas` and `GET /v1/schemas/{ns}/{name}`, as design §2 "API".
