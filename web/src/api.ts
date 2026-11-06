@@ -119,6 +119,7 @@ export type ProtocolVersion = {
   created_at: string;
   protocol_md?: string;
   protocol_meta?: unknown;
+  params_schema_version_id?: string;
 };
 
 export type RunState = 'planned' | 'running' | 'paused' | 'completed' | 'failed' | 'aborted' | 'signed';
@@ -140,6 +141,7 @@ export type Run = {
   node_id: string;
   state: RunState;
   params: unknown;
+  params_schema_version_id?: string;
   signing_policy: PolicyStep[];
   signatures: Signature[];
   started_at?: string;
@@ -198,6 +200,7 @@ export type LineageNode = {
   kind: NodeKind;
   label: string;
   attrs?: Record<string, unknown>;
+  schema_version_id?: string;
   created_at: string;
 };
 
@@ -275,7 +278,7 @@ export type ChangeItem =
   | { op: 'update_node'; node_id: string; label?: string; attrs?: Record<string, unknown> }
   | { op: 'update_run_params'; run_id: string; params: Record<string, unknown> }
   | { op: 'set_experiment_title'; experiment_id: string; title: string }
-  | { op: 'add_node'; kind: NodeKind; label: string; attrs?: Record<string, unknown> }
+  | { op: 'add_node'; kind: NodeKind; label: string; attrs?: Record<string, unknown>; schema_version_id?: string }
   | { op: 'add_edge'; from: string; to: string; relation: Relation }
   | { op: 'add_note'; node_id: string; body: string }
   | { op: 'edit_note'; note_id: string; body: string };
@@ -316,6 +319,61 @@ export type ChangeSetSummary = {
   state: ChangeSetState;
   items: number;
   created_at: string;
+};
+
+// SchemaProblem is one failed rule: where in the instance (a JSON pointer, "" for the root), and why.
+export type SchemaProblem = { pointer: string; message: string };
+
+// AppliesTo is what a schema describes: a lineage node kind, or a run's params (SPEC-009-R01).
+export type AppliesTo = NodeKind | 'run_params';
+
+export type SchemaRecord = {
+  id: string;
+  namespace: string;
+  name: string;
+  applies_to: AppliesTo;
+  created_by: string;
+  created_at: string;
+};
+
+export type SchemaVersionRef = { id: string; major: number; minor: number; sha256: string };
+
+// SchemaSummary is a schema in a list, with its highest published version (null while none is published).
+export type SchemaSummary = SchemaRecord & { latest_published: SchemaVersionRef | null };
+
+export type SchemaVersionSummary = {
+  id: string;
+  major: number;
+  minor: number;
+  status: 'draft' | 'published';
+  author: string;
+  author_id: string | null;
+  sha256: string;
+  created_at: string;
+  published_at: string | null;
+};
+
+// SchemaDetail is one schema with its versions, highest first, without their text.
+export type SchemaDetail = SchemaRecord & { versions: SchemaVersionSummary[] };
+
+// SchemaVersion is one version with its text. bundled is the self-contained form of it, returned by GET only.
+export type SchemaVersion = {
+  id: string;
+  schema_id: string;
+  namespace: string;
+  name: string;
+  applies_to: AppliesTo;
+  major: number;
+  minor: number;
+  status: 'draft' | 'published';
+  body_text: string;
+  author: string;
+  author_id: string | null;
+  sha256: string;
+  created_at: string;
+  published_by: string | null;
+  published_at: string | null;
+  bundled?: Record<string, unknown>;
 };
 
 // stored reads a session key, tolerating storage that is disabled or throws.
@@ -364,12 +422,14 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
-// ApiError is a failed request: the server's message, and its HTTP status.
+// ApiError is a failed request: the server's message, its HTTP status, and for a rejected schema the problems.
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  problems: SchemaProblem[];
+  constructor(message: string, status: number, problems: SchemaProblem[] = []) {
     super(message);
     this.status = status;
+    this.problems = problems;
   }
 }
 
@@ -391,13 +451,15 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
   if (res.status === 401 && path !== '/v1/meta' && !refusedSignature) onUnauthorized();
   if (!res.ok) {
     let msg: string | undefined;
+    let problems: SchemaProblem[] = [];
     try {
       const body = await res.json();
       msg = body?.error;
+      problems = body?.errors ?? [];
     } catch {
       // Not JSON: fall back to the status code.
     }
-    throw new ApiError(msg ?? String(res.status), res.status);
+    throw new ApiError(msg ?? String(res.status), res.status, problems);
   }
   return res.json() as Promise<T>;
 }
@@ -606,4 +668,63 @@ export function setSigningPolicy(experimentId: string, policy: PolicyStep[], rea
 
 export function renamePrincipal(id: string, displayName: string, reason: string): Promise<Principal> {
   return patch(`/v1/principals/${encodeURIComponent(id)}`, { display_name: displayName, reason });
+}
+
+export function listSchemas(appliesTo?: AppliesTo, cursor?: string, limit?: number): Promise<Page<SchemaSummary>> {
+  return get(`/v1/schemas${qs({ applies_to: appliesTo, cursor, limit: limit ? String(limit) : undefined })}`);
+}
+
+export function getSchema(ns: string, name: string): Promise<SchemaDetail> {
+  return get(`/v1/schemas/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
+}
+
+export function createSchema(s: { namespace: string; name: string; applies_to: AppliesTo }): Promise<SchemaRecord> {
+  return post('/v1/schemas', s);
+}
+
+export function createSchemaVersion(
+  ns: string,
+  name: string,
+  v: { major: number; minor: number; body_text: string },
+): Promise<SchemaVersion> {
+  return post(`/v1/schemas/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/versions`, v);
+}
+
+export function getSchemaVersion(id: string): Promise<SchemaVersion> {
+  return get(`/v1/schema-versions/${encodeURIComponent(id)}`);
+}
+
+export function updateSchemaVersion(id: string, bodyText: string): Promise<SchemaVersion> {
+  return put(`/v1/schema-versions/${encodeURIComponent(id)}`, { body_text: bodyText });
+}
+
+export function publishSchemaVersion(id: string): Promise<SchemaVersion> {
+  return request('POST', `/v1/schema-versions/${encodeURIComponent(id)}/publish`);
+}
+
+// validateAgainstSchema checks an instance against a registry version, or against a draft's text.
+export function validateAgainstSchema(
+  target: { schemaVersionId: string } | { bodyText: string },
+  instance: unknown,
+): Promise<{ valid: boolean; errors: SchemaProblem[] }> {
+  const ref = 'schemaVersionId' in target ? { schema_version_id: target.schemaVersionId } : { body_text: target.bodyText };
+  return post('/v1/schemas/validate', { ...ref, instance });
+}
+
+export function createNode(n: {
+  kind: NodeKind;
+  label: string;
+  attrs?: Record<string, unknown>;
+  schema_version_id?: string;
+}): Promise<LineageNode> {
+  return post('/v1/lineage/nodes', n);
+}
+
+export function createRun(r: {
+  experiment_id: string;
+  label?: string;
+  inputs?: string[];
+  params?: Record<string, unknown>;
+}): Promise<Run> {
+  return post('/v1/runs', r);
 }

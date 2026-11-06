@@ -189,7 +189,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
 
 ## Phase 4: UI
 
-- [ ] 4.1 API client
+- [x] 4.1 API client
   - Requirements: SPEC-009-R09 (support)
   - Files: `web/src/api.ts`
   - Do:
