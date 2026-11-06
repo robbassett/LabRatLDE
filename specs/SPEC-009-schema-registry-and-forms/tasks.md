@@ -86,7 +86,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Audit `schema.created` in the same transaction. Register routes in `Handler`.
   - Verify: `curl` as a dev user: create `lab/sample`, list it, filter with `?applies_to=reagent` (empty), read it, and create it again (409).
   - Integrity: yes
-- [ ] 3.3 Draft endpoints
+- [x] 3.3 Draft endpoints
   - Requirements: SPEC-009-R08, SPEC-009-R09 (support), SPEC-009-R10
   - Files: `internal/api/schemas.go`, `internal/api/server.go`
   - Do:
@@ -100,7 +100,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - `curl`: save a draft. Saving `{"type":"nonsense"}`, `true` or `{"$schema":"http://json-schema.org/draft-07/schema#"}` is 422 each time. As another dev user, `PUT` is 403 (`LDE05`: not the author, though dev users hold every role).
     - A version whose `allOf` has `$ref` to a published version reads back with that version under `bundled.$defs` and the ref rewritten to `#/$defs/…`.
   - Integrity: yes
-- [ ] 3.4 Publish
+- [x] 3.4 Publish
   - Requirements: SPEC-009-R07, SPEC-009-R11
   - Files: `internal/api/schemas.go`, `internal/api/server.go`
   - Do: `POST /v1/schema-versions/{id}/publish`, taking no body:

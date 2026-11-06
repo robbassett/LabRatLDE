@@ -96,6 +96,10 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("POST /v1/schemas", s.createSchema)
 	v1.HandleFunc("GET /v1/schemas", s.listSchemas)
 	v1.HandleFunc("GET /v1/schemas/{ns}/{name}", s.getSchema)
+	v1.HandleFunc("POST /v1/schemas/{ns}/{name}/versions", s.createSchemaVersion)
+	v1.HandleFunc("GET /v1/schema-versions/{id}", s.getSchemaVersion)
+	v1.HandleFunc("PUT /v1/schema-versions/{id}", s.putSchemaVersion)
+	v1.HandleFunc("POST /v1/schema-versions/{id}/publish", s.publishSchemaVersion)
 
 	v1.HandleFunc("POST /v1/change-sets", s.createChangeSet)
 	v1.HandleFunc("GET /v1/change-sets", s.listChangeSets)

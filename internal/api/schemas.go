@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -211,6 +214,253 @@ func (s *Server) getSchema(w http.ResponseWriter, r *http.Request) {
 			out.Versions = append(out.Versions, v)
 		}
 		return rows.Err()
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type schemaVersion struct {
+	ID          string     `json:"id"`
+	SchemaID    string     `json:"schema_id"`
+	Namespace   string     `json:"namespace"`
+	Name        string     `json:"name"`
+	AppliesTo   string     `json:"applies_to"`
+	Major       int        `json:"major"`
+	Minor       int        `json:"minor"`
+	Status      string     `json:"status"`
+	BodyText    string     `json:"body_text"`
+	Author      string     `json:"author"`
+	AuthorID    *string    `json:"author_id"`
+	SHA256      string     `json:"sha256"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedBy *string    `json:"published_by"`
+	PublishedAt *time.Time `json:"published_at"`
+}
+
+// loadSchemaVersion reads one version with its schema; lock takes FOR UPDATE.
+// pgx.ErrNoRows is 404.
+func loadSchemaVersion(ctx context.Context, tx pgx.Tx, id string, lock bool) (schemaVersion, error) {
+	q := `
+		SELECT v.id, v.schema_id, s.namespace, s.name, s.applies_to, v.major, v.minor, v.status, v.body_text,
+		       v.author, v.author_id, encode(v.sha256, 'hex'), v.created_at, v.published_by, v.published_at
+		FROM schema_versions v JOIN schemas s ON s.tenant_id = v.tenant_id AND s.id = v.schema_id
+		WHERE v.id = $1`
+	if lock {
+		q += ` FOR UPDATE OF v`
+	}
+	var v schemaVersion
+	err := tx.QueryRow(ctx, q, id).Scan(&v.ID, &v.SchemaID, &v.Namespace, &v.Name, &v.AppliesTo, &v.Major, &v.Minor,
+		&v.Status, &v.BodyText, &v.Author, &v.AuthorID, &v.SHA256, &v.CreatedAt, &v.PublishedBy, &v.PublishedAt)
+	return v, err
+}
+
+// registryText returns the text of the published version that url names.
+func registryText(ctx context.Context, tx pgx.Tx, url string) (string, error) {
+	ns, name, major, minor, ok := domain.ParseSchemaURL(url)
+	if !ok {
+		return "", fmt.Errorf("%s is not a registry URL", url)
+	}
+	var text string
+	err := tx.QueryRow(ctx, `
+		SELECT v.body_text
+		FROM schema_versions v JOIN schemas s ON s.tenant_id = v.tenant_id AND s.id = v.schema_id
+		WHERE s.namespace = $1 AND s.name = $2 AND v.major = $3 AND v.minor = $4 AND v.status = 'published'`,
+		ns, name, major, minor).Scan(&text)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("%s is not a published schema version", url)
+	}
+	return text, err
+}
+
+// createSchemaVersion saves a new draft.
+//
+//	POST /v1/schemas/{ns}/{name}/versions  {"major", "minor", "body_text"}
+func (s *Server) createSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	var req struct {
+		Major    int    `json:"major"`
+		Minor    int    `json:"minor"`
+		BodyText string `json:"body_text"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if req.Major < 0 || req.Minor < 0 {
+		s.fail(w, r, badRequest("major and minor must not be negative"))
+		return
+	}
+	if problems := domain.CheckSchema(req.BodyText); len(problems) > 0 {
+		s.fail(w, r, &schemaInvalid{subject: "schema is not valid", problems: problems})
+		return
+	}
+	var out schemaVersion
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		var schemaID string
+		if err := tx.QueryRow(ctx, `SELECT id FROM schemas WHERE namespace = $1 AND name = $2`,
+			r.PathValue("ns"), r.PathValue("name")).Scan(&schemaID); err != nil {
+			return err // pgx.ErrNoRows is 404
+		}
+		var id string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO schema_versions (tenant_id, schema_id, major, minor, body_text, author)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id`,
+			p.Tenant, schemaID, req.Major, req.Minor, req.BodyText, p.Actor).Scan(&id); err != nil {
+			return err
+		}
+		v, err := loadSchemaVersion(ctx, tx, id, false)
+		if err != nil {
+			return err
+		}
+		out = v
+		_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
+			Actor: p.Actor, Action: "schema.version_drafted", EntityType: "schema_version", EntityID: out.ID,
+			Payload: map[string]any{"schema_id": out.SchemaID, "major": out.Major, "minor": out.Minor, "sha256": out.SHA256},
+		})
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
+// getSchemaVersion returns one version and, as bundled, its text with the
+// published versions it refers to embedded under $defs.
+//
+//	GET /v1/schema-versions/{id}
+func (s *Server) getSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("schema version"))
+		return
+	}
+	var out struct {
+		schemaVersion
+		Bundled map[string]any `json:"bundled"`
+	}
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		v, err := loadSchemaVersion(ctx, tx, id, false)
+		if err != nil {
+			return err
+		}
+		out.schemaVersion = v
+		out.Bundled, err = domain.BundleSchema(v.BodyText, func(url string) (string, error) {
+			return registryText(ctx, tx, url)
+		})
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// putSchemaVersion replaces a draft's text. The database refuses anyone but
+// the author, and a published version.
+//
+//	PUT /v1/schema-versions/{id}  {"body_text"}
+func (s *Server) putSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("schema version"))
+		return
+	}
+	var req struct {
+		BodyText string `json:"body_text"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if problems := domain.CheckSchema(req.BodyText); len(problems) > 0 {
+		s.fail(w, r, &schemaInvalid{subject: "schema is not valid", problems: problems})
+		return
+	}
+	var out schemaVersion
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+			return err
+		}
+		if _, err := loadSchemaVersion(ctx, tx, id, true); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE schema_versions SET body_text = $2 WHERE id = $1`, id, req.BodyText); err != nil {
+			return err
+		}
+		v, err := loadSchemaVersion(ctx, tx, id, false)
+		if err != nil {
+			return err
+		}
+		out = v
+		_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
+			Actor: p.Actor, Action: "schema.version_updated", EntityType: "schema_version", EntityID: id,
+			Payload: map[string]any{"schema_id": out.SchemaID, "major": out.Major, "minor": out.Minor, "sha256": out.SHA256},
+		})
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// publishSchemaVersion makes a draft immutable once every registry version it
+// refers to is published and it compiles.
+//
+//	POST /v1/schema-versions/{id}/publish
+func (s *Server) publishSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	id := r.PathValue("id")
+	if !validUUID(id) {
+		s.fail(w, r, notFound("schema version"))
+		return
+	}
+	var out schemaVersion
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		if err := audit.LockChain(ctx, tx, p.Tenant); err != nil {
+			return err
+		}
+		v, err := loadSchemaVersion(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		if v.Status == "published" {
+			return &httpError{http.StatusConflict, "schema version is already published"}
+		}
+		load := func(url string) (string, error) { return registryText(ctx, tx, url) }
+		refs, problems := domain.SchemaRefs(v.BodyText)
+		for _, url := range refs {
+			if _, err := load(url); err != nil {
+				problems = append(problems, domain.SchemaProblem{Message: err.Error()})
+			}
+		}
+		if len(problems) > 0 {
+			return &schemaInvalid{subject: "schema cannot be published", problems: problems}
+		}
+		if _, err := domain.CompileSchema(domain.SchemaURL(v.Namespace, v.Name, v.Major, v.Minor), v.BodyText, load); err != nil {
+			return &schemaInvalid{subject: "schema cannot be published", problems: []domain.SchemaProblem{{Message: err.Error()}}}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE schema_versions SET status = 'published' WHERE id = $1`, id); err != nil {
+			return err
+		}
+		if out, err = loadSchemaVersion(ctx, tx, id, false); err != nil {
+			return err
+		}
+		_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
+			Actor: p.Actor, Action: "schema.version_published", EntityType: "schema_version", EntityID: id,
+			Payload: map[string]any{"schema_id": out.SchemaID, "major": out.Major, "minor": out.Minor, "sha256": out.SHA256},
+		})
+		return err
 	})
 	if err != nil {
 		s.fail(w, r, err)
