@@ -730,3 +730,115 @@ body {
   align-items: flex-start;
   margin: 0.75rem 0;
 }
+
+/* Schema forms (rjsf default theme) */
+.record-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.record-form .form-group {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.record-form legend,
+.record-form .control-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.record-form .required {
+  color: var(--danger);
+}
+
+.record-form input:not([type="checkbox"]):not([type="radio"]),
+.record-form select,
+.record-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.record-form textarea {
+  min-height: 5rem;
+}
+
+.record-form .field-description,
+.record-form .help-block {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.record-form .text-danger,
+.record-form .error-detail,
+.record-form .has-error .control-label {
+  color: var(--danger);
+}
+
+.record-form .error-detail {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.record-form .has-error input,
+.record-form .has-error select,
+.record-form .has-error textarea {
+  border-color: var(--danger);
+}
+
+.record-form .errors,
+.record-form .panel-danger {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+}
+
+.record-form-warning {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.record-form-warning p {
+  margin: 0 0 0.25rem;
+}
+
+.record-form-warning ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--danger);
+}
+
+/* Schema draft editor: the text beside its live preview (SPEC-009). */
+.draft-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.draft-text {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, Consolas, monospace;
+}

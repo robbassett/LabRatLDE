@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import {
   blame,
   diffRevisions,
+  type SchemaProblem,
   listAuditEvents,
   listRevisions,
   type AuditEvent,
@@ -232,6 +233,24 @@ function Revisions({ tab }: { tab: Tab | null }) {
 
 export default function BottomPanel({ active }: { active: Tab | null }) {
   const [panel, setPanel] = useState<(typeof PANELS)[number]>('Problems');
+  const [bySource, setBySource] = useState<Record<string, SchemaProblem[]>>({});
+
+  // Forms publish their latest problems; an empty list clears the source.
+  useEffect(() => {
+    const onProblems = (e: Event) => {
+      const { source, problems } = (e as CustomEvent<{ source: string; problems: SchemaProblem[] }>).detail;
+      setBySource((prev) => {
+        const next = { ...prev };
+        if (problems.length === 0) delete next[source];
+        else next[source] = problems;
+        return next;
+      });
+    };
+    window.addEventListener('labrat:problems', onProblems);
+    return () => window.removeEventListener('labrat:problems', onProblems);
+  }, []);
+
+  const rows = Object.entries(bySource).flatMap(([source, ps]) => ps.map((p) => ({ source, ...p })));
 
   // The "changed" marker on an edit field asks for the Revisions panel.
   useEffect(() => {
@@ -266,12 +285,32 @@ export default function BottomPanel({ active }: { active: Tab | null }) {
             onClick={() => setPanel(p)}
             onKeyDown={onKeyDown}
           >
-            {p}
+            {p === 'Problems' && rows.length > 0 ? `Problems (${rows.length})` : p}
           </button>
         ))}
       </div>
       <div role="tabpanel" id="panel-body" aria-labelledby={`panel-tab-${panel}`} className="panel-body" tabIndex={0}>
-        {panel === 'Problems' && <p className="muted">No problems</p>}
+        {panel === 'Problems' && rows.length === 0 && <p className="muted">No problems</p>}
+        {panel === 'Problems' && rows.length > 0 && (
+          <table className="history changes" aria-label="Problems">
+            <thead>
+              <tr>
+                <th scope="col">Source</th>
+                <th scope="col">Pointer</th>
+                <th scope="col">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.source}</td>
+                  <td>{r.pointer}</td>
+                  <td>{r.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
         {panel === 'History' && <History tab={active} />}
         {panel === 'Revisions' && <Revisions key={active ? tabKey(active) : ''} tab={active} />}
       </div>

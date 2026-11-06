@@ -54,3 +54,4 @@ No `Test: yes` requirements. These are read paths; tenant isolation is already t
 |---|---|---|---|
 | 1 | Is full-text search over notes and protocol text needed in v1? Recommendation: later; PostgreSQL `tsvector` when it is. | Rob Bassett | |
 | 2 | Can deployments rely on the `pg_trgm` extension (it ships with PostgreSQL contrib)? If not, label search uses `ILIKE` without an index. | Rob Bassett | |
+| 3 | SPEC-009 left the `x-lde-widget: node-picker:<kind>` form widget for this spec, because it needs node search. Add it here? (Raised by the SPEC-009 review, 2026-11-05.) | Rob Bassett | |

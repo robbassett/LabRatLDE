@@ -9,8 +9,11 @@ import InstrumentView from './InstrumentView';
 import DelegationsView from './DelegationsView';
 import LineageView from './LineageView';
 import MeView from './MeView';
+import NewNodeView from './NewNodeView';
 import PrincipalsView from './PrincipalsView';
 import RunView from './RunView';
+import SchemasView from './SchemasView';
+import SchemaView from './SchemaView';
 import SignoffView from './SignoffView';
 import type { Instrument } from './api';
 import { SINGLETONS, tabKey, useTabs, type Tab } from './tabs';
@@ -42,6 +45,12 @@ function TabContent({ tab, instruments, verifyOnOpen, open, rename }: { tab: Tab
       return <PrincipalsView />;
     case 'delegations':
       return <DelegationsView />;
+    case 'newnode':
+      return <NewNodeView open={open} />;
+    case 'schemas':
+      return <SchemasView open={open} />;
+    case 'schema':
+      return <SchemaView {...props} />;
   }
 }
 
@@ -90,6 +99,8 @@ export default function Workspace({ onSignOut }: { onSignOut: () => void }) {
     { id: 'cmd:me', title: 'My account', hint: 'Command', run: () => open(SINGLETONS.me!) },
     { id: 'cmd:principals', title: 'Principals', hint: 'Admin', run: () => open(SINGLETONS.principals!) },
     { id: 'cmd:delegations', title: 'Agent delegations', hint: 'Admin', run: () => open(SINGLETONS.delegations!) },
+    { id: 'cmd:newnode', title: 'New record', hint: 'Command', run: () => open(SINGLETONS.newnode!) },
+    { id: 'cmd:schemas', title: 'Schemas', hint: 'Command', run: () => open(SINGLETONS.schemas!) },
     { id: 'cmd:close-all', title: 'Close all tabs', hint: 'Command', run: closeAll },
     { id: 'cmd:sign-out', title: 'Sign out', hint: 'Command', run: onSignOut },
   ];

@@ -243,6 +243,8 @@ export default function Explorer({ open, onLoaded }: { open: (tab: Tab) => void;
         onActivate={() => open(SINGLETONS.audit!)}
         label="Audit trail"
       />
+      <Item itemKey="newnode" level={1} focusKey={fk} onActivate={() => open(SINGLETONS.newnode!)} label={SINGLETONS.newnode!.title} />
+      <Item itemKey="schemas" level={1} focusKey={fk} onActivate={() => open(SINGLETONS.schemas!)} label={SINGLETONS.schemas!.title} />
       <Item itemKey="inbox" level={1} focusKey={fk} onActivate={() => open(SINGLETONS.inbox!)} label="Review inbox" />
       <Item itemKey="signoff" level={1} focusKey={fk} onActivate={() => open(SINGLETONS.signoff!)} label={SINGLETONS.signoff!.title} />
       {(['me', 'principals', 'delegations'] as const).map((k) => (

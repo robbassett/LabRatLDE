@@ -17,7 +17,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-006 | [Identity and roles](implemented/SPEC-006-identity-and-roles/requirements.md) | Implemented |
 | SPEC-007 | [Revisions, change sets and notes](implemented/SPEC-007-revisions-and-change-sets/requirements.md) | Implemented |
 | SPEC-008 | [Electronic signatures v2](implemented/SPEC-008-electronic-signatures/requirements.md) | Implemented |
-| SPEC-009 | [Schema registry and schema-driven forms](SPEC-009-schema-registry-and-forms/requirements.md) | Draft |
+| SPEC-009 | [Schema registry and schema-driven forms](implemented/SPEC-009-schema-registry-and-forms/requirements.md) | Implemented |
 | SPEC-010 | [Schema governance namespaces](SPEC-010-schema-governance/requirements.md) | Draft |
 | SPEC-011 | [Query and comparison](SPEC-011-query-and-comparison/requirements.md) | Draft |
 | SPEC-012 | [Raw file custody](SPEC-012-raw-file-custody/requirements.md) | Draft |
@@ -32,6 +32,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-021 | [Reference identity broker and IdP recipes](SPEC-021-identity-broker/requirements.md) | Draft |
 | SPEC-022 | [Validation agents](SPEC-022-validation-agents/requirements.md) | Draft |
 | SPEC-023 | [Review hardening](implemented/SPEC-023-review-hardening/requirements.md) | Implemented |
+| SPEC-024 | [Standards-aligned starter schemas](SPEC-024-starter-schemas/requirements.md) | Draft (brief) |
 
 **SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008), `LDE08` validation draft item without a current decision (SPEC-022).
 
@@ -48,7 +49,8 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | Protocols as code | Built | Append-only, gapless versions with a DB-computed SHA-256; each run pins its version immutably (SPEC-003) |
 | Identity | Dev headers only | `LDE_ENV=prod` refuses to serve |
 | Web UI | Not started | Core to the product (decision D7) |
-| Schemas and governance tiers | Not started | `attrs` and `params` are unvalidated |
+| Schemas | Built | JSON Schema versions, immutable once published; attrs and params validated on write; schema-driven forms ([SPEC-009](implemented/SPEC-009-schema-registry-and-forms/requirements.md)) |
+| Governance tiers | Not started | Any human scientist may publish; no namespace levels or Steward yet (SPEC-010) |
 | Revisions / Git-like workflow | Not started | |
 | MCP / agents, pre-flight checks | Not started | |
 | Open exports, chain anchoring | Not started | |
@@ -69,7 +71,7 @@ These are correctness issues in what exists, not missing features. SPEC-002 and 
 |---|---|---|
 | D1 | The audit ledger is a **linear per-tenant hash chain**, not "Merkle-style". Later proofs and anchoring come from signed checkpoints (SPEC-018), never from changing digest v1. | Accuracy. Digest v1 is frozen. |
 | D2 | Performance claims are stated as measured NFRs, e.g. readings per request and audited mutations per second per tenant, never as "no degradation". | Each tenant's writes serialise on the chain head and the lineage lock. That's cheap but not free. |
-| D3 | **JSON Schema 2020-12** is the stored schema format. LinkML is optional, compiled upstream. Conformance is checked in Go; the DB enforces that a claimed schema version exists, is published and is immutable. | Mature Go tooling. Honest about which invariants the DB holds. |
+| D3 | **JSON Schema 2020-12** is the stored schema format. LinkML is optional, compiled upstream. Conformance is checked in Go; the DB enforces that a claimed schema version exists, is published and is immutable. Starter schemas follow open standards where their licences allow: Allotrope ontology (AFO) terms, ISA-95 (B2MML) and ISA-88. Allotrope Simple Model schemas are not shipped, because they are licensed non-commercial only (SPEC-024). | Mature Go tooling. Honest about which invariants the DB holds. |
 | D4 | **The three governance tiers are levels on one schema registry**, with a named Schema Steward per namespace (§3). | R&D needs speed and GMP manufacturing needs change control. One mechanism, configured per namespace, covers both. |
 | D5 | **"Git for lab records" means append-only revisions, change sets and review**: no rebase, no force-push, no branching of lab data (§4). | Corrections, appends and corrected notes are routine. Part 11 forbids obscuring prior values. |
 | D6 | **Agents are clients, never part of the engine.** The binary stays LLM-free. Agents are distinct principals acting `on_behalf_of` a human; they can propose but never commit or sign. | Determinism, validation scope, air-gap, and §11.100. |
@@ -140,6 +142,7 @@ Notes are first-class, revisioned Markdown attached to runs and nodes. Policy de
 |---|---|---|---|---|---|
 | SPEC-009 | Schema registry and schema-driven forms | JSON Schema 2020-12 versions, immutable once published; `schema_version_id` on nodes and runs; validation of attrs and params on write. UI: forms rendered and validated from the schema, schema browser | Published versions immutable; non-conforming writes rejected | 11.10(h) | 005 |
 | SPEC-010 | Schema governance namespaces | §3 above: namespaces, levels, Steward, per-level compatibility linter, change requests as change sets, Controlled changes needing Steward + QA signatures and impact analysis, CURIE fields, optional GitOps. UI: change-request review with diff and impact list | Each level's rule; Controlled needs both signatures; a sandbox never alters its parent | 11.10(k) change control | 007, 008, 009 |
+| SPEC-024 | Standards-aligned starter schemas | `lde` schemas seeded into each tenant: material lot and equipment after ISA-95 (B2MML), with ISA-88 equipment levels; sample tagged with Allotrope ontology terms; attribution in `NOTICE`. No ASM schemas (non-commercial licence) | None beyond SPEC-009-R01 | none | 009 |
 | SPEC-011 | Query and comparison | Filter nodes by kind, schema and JSONB path; page readings by dataset; compare datasets across experiments. UI: search and a comparison view with charts | None (reads, RLS-scoped) | none | 009 |
 
 ### Phase 3: Zero-entry ingestion

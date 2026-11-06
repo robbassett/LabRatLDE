@@ -73,6 +73,8 @@ type Run struct {
 	FinishedAt        *time.Time      `json:"finished_at,omitempty"`
 	CreatedBy         string          `json:"created_by"`
 	CreatedAt         time.Time       `json:"created_at"`
+	// ParamsSchemaVersionID is the schema the pinned protocol version checks params against, if any.
+	ParamsSchemaVersionID *string `json:"params_schema_version_id,omitempty"`
 }
 
 // Signature is a signature's JSON (SPEC-008-R12). It is valid until a

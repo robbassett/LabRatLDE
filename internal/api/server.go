@@ -93,6 +93,15 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("POST /v1/lineage/edges", s.createEdge)
 	v1.HandleFunc("GET /v1/lineage/{id}", s.getLineage)
 
+	v1.HandleFunc("POST /v1/schemas", s.createSchema)
+	v1.HandleFunc("GET /v1/schemas", s.listSchemas)
+	v1.HandleFunc("GET /v1/schemas/{ns}/{name}", s.getSchema)
+	v1.HandleFunc("POST /v1/schemas/{ns}/{name}/versions", s.createSchemaVersion)
+	v1.HandleFunc("GET /v1/schema-versions/{id}", s.getSchemaVersion)
+	v1.HandleFunc("PUT /v1/schema-versions/{id}", s.putSchemaVersion)
+	v1.HandleFunc("POST /v1/schema-versions/{id}/publish", s.publishSchemaVersion)
+	v1.HandleFunc("POST /v1/schemas/validate", s.validateSchema)
+
 	v1.HandleFunc("POST /v1/change-sets", s.createChangeSet)
 	v1.HandleFunc("GET /v1/change-sets", s.listChangeSets)
 	v1.HandleFunc("GET /v1/change-sets/{id}", s.getChangeSet)
@@ -275,8 +284,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		he      *httpError
 		lineErr *ingest.LineError
 		tooBig  *http.MaxBytesError
+		invalid *schemaInvalid
 	)
 	switch {
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": invalid.Error(), "errors": invalid.problems})
 	case errors.As(err, &he):
 		writeError(w, he.status, he.msg)
 	case errors.As(err, &lineErr):
@@ -291,6 +303,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case storage.IsBadReference(err):
 		writeError(w, http.StatusUnprocessableEntity, "referenced entity does not exist in this tenant")
+	case storage.IsBadSchemaRef(err):
+		writeError(w, http.StatusUnprocessableEntity, storage.ErrorMessage(err))
 	case storage.IsRoleDenied(err):
 		writeError(w, http.StatusForbidden, storage.ErrorMessage(err))
 	case storage.IsInvalid(err):

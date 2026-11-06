@@ -16,6 +16,7 @@ import {
 } from './api';
 import { lineDiff, type DiffLine } from './diff';
 import EditField from './EditField';
+import NewRunForm from './NewRunForm';
 import { tabKey, type Tab } from './tabs';
 
 // HTML is disabled, so rendered output cannot contain author-supplied markup.
@@ -305,6 +306,8 @@ export default function ExperimentView({ id, open, rename }: Props) {
           </button>
         </p>
       )}
+
+      <NewRunForm exp={exp} open={open} />
 
       <h2>Protocol</h2>
       <div className="protocol" dangerouslySetInnerHTML={{ __html: md.render(stripFrontmatter(exp.protocol_md)) }} />

@@ -27,6 +27,8 @@ type protocolVersion struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	ProtocolMD   string          `json:"protocol_md,omitempty"`
 	ProtocolMeta json.RawMessage `json:"protocol_meta,omitempty"`
+	// ParamsSchemaVersionID is the run_params schema named by the frontmatter's params_schema.
+	ParamsSchemaVersionID *string `json:"params_schema_version_id,omitempty"`
 }
 
 // addProtocolVersion parses md, creates the protocol lineage node and the next version of experiment expID, and audits it. Used by createExperiment (v1) and createProtocolVersion.
@@ -41,6 +43,15 @@ func addProtocolVersion(ctx context.Context, tx pgx.Tx, p Principal, expID, slug
 	meta, err := json.Marshal(doc.Meta)
 	if err != nil {
 		return protocolVersion{}, badRequest("protocol_md frontmatter is not JSON-representable: %v", err)
+	}
+
+	schemaID, schemaSHA, err := resolveParamsSchema(ctx, tx, doc.Meta)
+	if err != nil {
+		return protocolVersion{}, err
+	}
+	var schemaRef *string // null when the protocol names no schema
+	if schemaID != "" {
+		schemaRef = &schemaID
 	}
 
 	// A concurrent add can make next stale; it then collides on
@@ -66,16 +77,22 @@ func addProtocolVersion(ctx context.Context, tx pgx.Tx, p Principal, expID, slug
 	}
 	pv := protocolVersion{ExperimentID: expID, NodeID: nodeID, CreatedBy: p.Actor}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO protocol_versions (tenant_id, experiment_id, version, protocol_md, protocol_meta, node_id, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO protocol_versions (tenant_id, experiment_id, version, protocol_md, protocol_meta, node_id, created_by, params_schema_version_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, version, encode(sha256, 'hex'), created_at`,
-		p.Tenant, expID, next, md, json.RawMessage(meta), nodeID, p.Actor,
+		p.Tenant, expID, next, md, json.RawMessage(meta), nodeID, p.Actor, schemaRef,
 	).Scan(&pv.ID, &pv.Version, &pv.SHA256, &pv.CreatedAt); err != nil {
 		return protocolVersion{}, err
 	}
+	pv.ParamsSchemaVersionID = schemaRef
+	payload := map[string]any{"experiment_id": expID, "node_id": nodeID, "sha256": pv.SHA256, "version": pv.Version}
+	if schemaID != "" {
+		payload["schema_version_id"] = schemaID
+		payload["schema_sha256"] = schemaSHA
+	}
 	_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
 		Actor: p.Actor, Action: "protocol.version_created", EntityType: "protocol_version", EntityID: pv.ID,
-		Payload: map[string]any{"experiment_id": expID, "node_id": nodeID, "sha256": pv.SHA256, "version": pv.Version},
+		Payload: payload,
 	})
 	return pv, err
 }
@@ -126,7 +143,7 @@ func (s *Server) listProtocolVersions(w http.ResponseWriter, r *http.Request) {
 	list := []protocolVersion{}
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT id, experiment_id, version, encode(sha256, 'hex'), node_id, created_by, created_at
+			SELECT id, experiment_id, version, encode(sha256, 'hex'), node_id, created_by, created_at, params_schema_version_id
 			FROM protocol_versions WHERE experiment_id = $1 ORDER BY version`, expID)
 		if err != nil {
 			return err
@@ -134,7 +151,7 @@ func (s *Server) listProtocolVersions(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var pv protocolVersion
-			if err := rows.Scan(&pv.ID, &pv.ExperimentID, &pv.Version, &pv.SHA256, &pv.NodeID, &pv.CreatedBy, &pv.CreatedAt); err != nil {
+			if err := rows.Scan(&pv.ID, &pv.ExperimentID, &pv.Version, &pv.SHA256, &pv.NodeID, &pv.CreatedBy, &pv.CreatedAt, &pv.ParamsSchemaVersionID); err != nil {
 				return err
 			}
 			list = append(list, pv)
@@ -159,9 +176,9 @@ func (s *Server) getProtocolVersion(w http.ResponseWriter, r *http.Request) {
 	var pv protocolVersion
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT id, experiment_id, version, protocol_md, protocol_meta, encode(sha256, 'hex'), node_id, created_by, created_at
+			SELECT id, experiment_id, version, protocol_md, protocol_meta, encode(sha256, 'hex'), node_id, created_by, created_at, params_schema_version_id
 			FROM protocol_versions WHERE id = $1`, id,
-		).Scan(&pv.ID, &pv.ExperimentID, &pv.Version, &pv.ProtocolMD, &pv.ProtocolMeta, &pv.SHA256, &pv.NodeID, &pv.CreatedBy, &pv.CreatedAt)
+		).Scan(&pv.ID, &pv.ExperimentID, &pv.Version, &pv.ProtocolMD, &pv.ProtocolMeta, &pv.SHA256, &pv.NodeID, &pv.CreatedBy, &pv.CreatedAt, &pv.ParamsSchemaVersionID)
 	})
 	if err != nil {
 		s.fail(w, r, err)

@@ -61,11 +61,13 @@ func (r Relation) Valid() bool {
 
 // Node is a vertex: a physical sample, a process, or a piece of data.
 type Node struct {
-	ID        string         `json:"id"`
-	Kind      NodeKind       `json:"kind"`
-	Label     string         `json:"label"`
-	Attrs     map[string]any `json:"attrs,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID    string         `json:"id"`
+	Kind  NodeKind       `json:"kind"`
+	Label string         `json:"label"`
+	Attrs map[string]any `json:"attrs,omitempty"`
+	// SchemaVersionID is the schema version the node's attrs are checked against.
+	SchemaVersionID *string   `json:"schema_version_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // Edge is a directed provenance link.

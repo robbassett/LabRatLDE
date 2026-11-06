@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import type { RJSFSchema } from '@rjsf/utils';
+import { ApiError, getSchemaVersion, type SchemaProblem } from './api';
+import RecordForm from './RecordForm';
+import { useSchemaValidation } from './useSchemaValidation';
 
 type Props = {
   label: string;
@@ -10,6 +14,10 @@ type Props = {
   proposeOnly?: boolean;
   // readOnly: the record is frozen and can't be corrected (aborted, or signed before SPEC-008).
   readOnly?: boolean;
+  // schemaVersionId: show and edit the JSON value as a form for this schema version (SPEC-009-R09).
+  // warnOnly lists its problems as a warning (a planned run's params are only checked at start).
+  schemaVersionId?: string;
+  warnOnly?: boolean;
   // onSave resolves 'proposed' when it proposed a change set instead of changing the record.
   onSave: (value: string, reason: string) => Promise<void | 'proposed'>;
 };
@@ -17,15 +25,45 @@ type Props = {
 // EditField shows a value with an Edit control. Saving needs a reason. A "changed" button
 // opens the bottom panel's Revisions tab. A successful save dispatches labrat:revised, unless it
 // only proposed a correction, which links to the review inbox instead.
-export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, onSave }: Props) {
+export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, schemaVersionId, warnOnly, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [proposed, setProposed] = useState(false);
   const [draft, setDraft] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [schema, setSchema] = useState<RJSFSchema | null>(null);
+  const [saveProblems, setSaveProblems] = useState<SchemaProblem[] | null>(null);
+  const source = `edit:${useId()}`;
   const editButton = useRef<HTMLButtonElement>(null);
   const wasEditing = useRef(false);
+
+  // A failed load falls back to the JSON box, with the message shown.
+  useEffect(() => {
+    setSchema(null);
+    if (!schemaVersionId) return;
+    let live = true;
+    getSchemaVersion(schemaVersionId)
+      .then((v) => {
+        if (!live) return;
+        if (v.bundled) setSchema(v.bundled as RJSFSchema);
+        else setError('Could not load the schema: no bundled form.');
+      })
+      .catch((err: unknown) => {
+        if (live) setError(`Could not load the schema: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    return () => {
+      live = false;
+    };
+  }, [schemaVersionId]);
+
+  const draftValue = parseOrEmpty(draft);
+  const hookProblems = useSchemaValidation(
+    source,
+    editing && schema && schemaVersionId ? { schemaVersionId } : null,
+    draftValue,
+  );
+  const problems = saveProblems ?? hookProblems;
 
   // Leaving edit mode unmounts the form, so return focus to the Edit button.
   useEffect(() => {
@@ -37,6 +75,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
     setDraft(value);
     setReason('');
     setError(null);
+    setSaveProblems(null);
     setProposed(false);
     setEditing(true);
   }
@@ -70,6 +109,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
       else window.dispatchEvent(new CustomEvent('labrat:revised'));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && err.problems.length > 0) setSaveProblems(err.problems);
     } finally {
       setSaving(false);
     }
@@ -78,7 +118,16 @@ export default function EditField({ label, value, multiline, json, changed, prop
   if (!editing) {
     return (
       <div className="edit-field">
-        <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
+        {schema ? (
+          <RecordForm schema={schema} value={parseOrEmpty(value)} onChange={() => {}} problems={[]} readOnly />
+        ) : (
+          <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
+        )}
+        {error && schemaVersionId && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
         {readOnly ? (
           <span className="muted"> Read-only: this record is frozen.</span>
         ) : (
@@ -106,10 +155,24 @@ export default function EditField({ label, value, multiline, json, changed, prop
   }
 
   return (
+    <>
+    {schema && (
+      <RecordForm
+        schema={schema}
+        value={draftValue}
+        onChange={(v) => {
+          setSaveProblems(null);
+          setDraft(JSON.stringify(v));
+        }}
+        problems={problems}
+        warnOnly={warnOnly}
+      />
+    )}
     <form className="edit-form" onSubmit={save}>
       {proposeOnly && (
         <p className="muted">This record is signed. Your change is proposed as a correction, and a reviewer must commit it.</p>
       )}
+      {!schema && (
       <label>
         {label}
         {json || multiline ? (
@@ -125,6 +188,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
           <input value={draft} onChange={(e) => setDraft(e.target.value)} disabled={saving} autoFocus />
         )}
       </label>
+      )}
       <label>
         Reason
         <input value={reason} onChange={(e) => setReason(e.target.value)} disabled={saving} required />
@@ -143,5 +207,14 @@ export default function EditField({ label, value, multiline, json, changed, prop
         </button>
       </div>
     </form>
+    </>
   );
+}
+
+function parseOrEmpty(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
 }

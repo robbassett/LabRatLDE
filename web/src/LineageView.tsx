@@ -238,6 +238,7 @@ export default function LineageView({ id, open, rename }: Props) {
               <EditField
                 label="Attributes"
                 json
+                schemaVersionId={node.schema_version_id}
                 value={JSON.stringify(node.attrs ?? {}, null, 2)}
                 changed={attrsChanged}
                 onSave={(value, reason) =>

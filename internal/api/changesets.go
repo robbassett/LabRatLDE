@@ -34,6 +34,10 @@ type changeItem struct {
 	From          string          `json:"from,omitempty"`
 	To            string          `json:"to,omitempty"`
 	Relation      domain.Relation `json:"relation,omitempty"`
+	// SchemaVersionID is for add_node: the version its attrs must match.
+	// A pointer, so "" is refused rather than read as "no schema". nil is
+	// omitted, which keeps the items_sha256 of change sets without it.
+	SchemaVersionID *string `json:"schema_version_id,omitempty"`
 }
 
 // validate checks an item's fields for its op, so nothing malformed reaches
@@ -80,6 +84,9 @@ func (it changeItem) validate() error {
 		}
 		if it.Label == nil || strings.TrimSpace(*it.Label) == "" {
 			return badRequest("add_node needs a label")
+		}
+		if it.SchemaVersionID != nil && !validUUID(*it.SchemaVersionID) {
+			return badRequest("schema_version_id must be a uuid")
 		}
 	case "add_edge":
 		if !validUUID(it.From) || !validUUID(it.To) {
@@ -148,10 +155,29 @@ func applyItems(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string
 func applyItem(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string, it changeItem) error {
 	switch it.Op {
 	case "update_node":
+		if it.Attrs != nil {
+			instance, err := json.Marshal(it.Attrs)
+			if err != nil {
+				return err
+			}
+			if err := checkRecord(ctx, tx, "lineage_node", it.NodeID, "does not match", instance); err != nil {
+				return err
+			}
+		}
 		return updateRecord(ctx, tx, p, csID, reason, "lineage_node", it.NodeID,
 			`UPDATE lineage_nodes SET label = COALESCE($2, label), attrs = COALESCE($3, attrs) WHERE id = $1`,
 			it.NodeID, it.Label, it.Attrs)
 	case "update_run_params":
+		// A planned run's params are checked when it starts (SPEC-009-R13).
+		var state string
+		if err := tx.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1`, it.RunID).Scan(&state); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if state != "planned" {
+			if err := checkRecord(ctx, tx, "run", it.RunID, "params do not match", it.Params); err != nil {
+				return err
+			}
+		}
 		return updateRecord(ctx, tx, p, csID, reason, "run", it.RunID,
 			`UPDATE runs SET params = $2 WHERE id = $1`, it.RunID, it.Params)
 	case "set_experiment_title":
@@ -164,7 +190,7 @@ func applyItem(ctx context.Context, tx pgx.Tx, p Principal, csID, reason string,
 		return updateRecord(ctx, tx, p, csID, reason, "note", it.NoteID,
 			`UPDATE notes SET body = $2 WHERE id = $1`, it.NoteID, it.Body)
 	case "add_node":
-		_, err := insertNode(ctx, tx, p, it.Kind, *it.Label, it.Attrs)
+		_, err := insertSchemaNode(ctx, tx, p, it.Kind, *it.Label, it.Attrs, deref(it.SchemaVersionID))
 		return err
 	case "add_edge":
 		return insertEdge(ctx, tx, p, domain.Edge{From: it.From, To: it.To, Relation: it.Relation})
@@ -193,10 +219,29 @@ func updateRecord(ctx context.Context, tx pgx.Tx, p Principal, csID, reason, ent
 	if err != nil || after == before {
 		return err
 	}
+	payload := map[string]any{"rev": after, "change_set_id": csID}
+	schemaID, sha, err := recordSchema(ctx, tx, entityType, entityID)
+	if err != nil {
+		return err
+	}
+	if schemaID != "" {
+		payload["schema_version_id"], payload["schema_sha256"] = schemaID, sha
+	}
 	_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
 		Actor: p.Actor, Action: "record.revised", EntityType: entityType, EntityID: entityID, Reason: reason,
-		Payload: map[string]any{"rev": after, "change_set_id": csID},
+		Payload: payload,
 	})
+	return err
+}
+
+// checkRecord checks a new value of a node's attrs or a run's params against the
+// record's schema, if it has one (SPEC-009-R05).
+func checkRecord(ctx context.Context, tx pgx.Tx, entityType, entityID, what string, instance []byte) error {
+	schemaID, _, err := recordSchema(ctx, tx, entityType, entityID)
+	if err != nil || schemaID == "" {
+		return err
+	}
+	_, err = checkAgainst(ctx, tx, schemaID, what, instance)
 	return err
 }
 

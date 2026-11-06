@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { blame, editRunParams, getRun, listAuditEvents, proposeChangeSet, type AuditEvent, type RunDetail } from './api';
+import {
+  ApiError,
+  blame,
+  editRunParams,
+  getRun,
+  listAuditEvents,
+  proposeChangeSet,
+  transitionRun,
+  type AuditEvent,
+  type RunDetail,
+  type SchemaProblem,
+} from './api';
 import EditField from './EditField';
 import Notes from './Notes';
 import SignaturesPanel from './SignaturesPanel';
@@ -24,6 +35,7 @@ function loadRun(id: string) {
 
 export default function RunView({ id, open }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [startError, setStartError] = useState<{ message: string; problems: SchemaProblem[] } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -49,12 +61,45 @@ export default function RunView({ id, open }: Props) {
   const proposeOnly = run.signatures.some((s) => s.valid);
   const readOnly = !proposeOnly && (run.state === 'aborted' || run.state === 'signed');
 
+  // A refused start (422) lists the params problems here and in the Problems panel (SPEC-009-R13).
+  async function start() {
+    setStartError(null);
+    try {
+      await transitionRun(id, 'running', 'Start run');
+      setState({ status: 'ready', ...(await loadRun(id)) });
+      window.dispatchEvent(new CustomEvent('labrat:problems', { detail: { source: `run:${id}`, problems: [] } }));
+    } catch (err: unknown) {
+      const problems = err instanceof ApiError ? err.problems : [];
+      setStartError({ message: err instanceof Error ? err.message : String(err), problems });
+      window.dispatchEvent(new CustomEvent('labrat:problems', { detail: { source: `run:${id}`, problems } }));
+    }
+  }
+
   return (
     <article className="view">
       <h1>Run</h1>
       <p>
         State: <strong>{run.state}</strong>
       </p>
+      {run.state === 'planned' && (
+        <p>
+          <button type="button" onClick={start}>
+            Start run
+          </button>
+        </p>
+      )}
+      {startError && (
+        <div role="alert" className="error">
+          <p>{startError.message}</p>
+          <ul>
+            {startError.problems.map((p, i) => (
+              <li key={i}>
+                {p.pointer !== '' && <code>{p.pointer}</code>} {p.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p>Started: {run.started_at ?? 'not started'}</p>
       <p>Finished: {run.finished_at ?? 'not finished'}</p>
       <p>
@@ -73,6 +118,8 @@ export default function RunView({ id, open }: Props) {
         label="Params"
         value={JSON.stringify(run.params ?? {}, null, 2)}
         json
+        schemaVersionId={run.params_schema_version_id}
+        warnOnly={run.state === 'planned'}
         changed={changed}
         proposeOnly={proposeOnly}
         readOnly={readOnly}
