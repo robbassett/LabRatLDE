@@ -79,21 +79,31 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) {
 		Kind  domain.NodeKind `json:"kind"`
 		Label string          `json:"label"`
 		Attrs map[string]any  `json:"attrs"`
+		// SchemaVersionID is optional: the version the attrs must match.
+		SchemaVersionID string `json:"schema_version_id"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	if req.SchemaVersionID != "" && !validUUID(req.SchemaVersionID) {
+		s.fail(w, r, badRequest("schema_version_id must be a uuid"))
+		return
+	}
 	var id string
 	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) (err error) {
-		id, err = insertNode(ctx, tx, p, req.Kind, req.Label, req.Attrs)
+		id, err = insertSchemaNode(ctx, tx, p, req.Kind, req.Label, req.Attrs, req.SchemaVersionID)
 		return err
 	})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, domain.Node{ID: id, Kind: req.Kind, Label: req.Label, Attrs: req.Attrs})
+	node := domain.Node{ID: id, Kind: req.Kind, Label: req.Label, Attrs: req.Attrs}
+	if req.SchemaVersionID != "" {
+		node.SchemaVersionID = &req.SchemaVersionID
+	}
+	writeJSON(w, http.StatusCreated, node)
 }
 
 func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +156,7 @@ func (s *Server) getLineage(w http.ResponseWriter, r *http.Request) {
 				SELECT $1::uuid
 				UNION SELECT e.to_id FROM lineage_edges e JOIN down ON e.from_id = down.id
 			)
-			SELECT id, kind, label, attrs, created_at FROM lineage_nodes
+			SELECT id, kind, label, attrs, schema_version_id, created_at FROM lineage_nodes
 			WHERE id IN (SELECT id FROM up   WHERE $2 IN ('upstream', 'both')
 			             UNION
 			             SELECT id FROM down WHERE $2 IN ('downstream', 'both'))`, id, direction)
@@ -157,7 +167,7 @@ func (s *Server) getLineage(w http.ResponseWriter, r *http.Request) {
 		var ids []string
 		for rows.Next() {
 			var n domain.Node
-			if err := rows.Scan(&n.ID, &n.Kind, &n.Label, &n.Attrs, &n.CreatedAt); err != nil {
+			if err := rows.Scan(&n.ID, &n.Kind, &n.Label, &n.Attrs, &n.SchemaVersionID, &n.CreatedAt); err != nil {
 				return err
 			}
 			ids = append(ids, n.ID)

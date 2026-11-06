@@ -121,7 +121,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Then `POST /v1/schemas/validate`, as the design says. With `body_text`, run `CheckSchema` and `SchemaRefs` first (`*schemaInvalid` on a problem), and compile it under the URL `domain.SchemaURL("draft", "preview", 0, 0)`.
     - It writes nothing and audits nothing. Exactly one of `schema_version_id` and `body_text` is required, otherwise 400; a missing `instance` is 400.
   - Verify: `curl`, with the fixture: `{"volume_ul":-5,"matrix":"urine"}` gives `valid: false` with `/matrix` and `/volume_ul`; `{"matrix":"plasma"}` gives `/volume_ul`; `{"volume_ul":50,"matrix":"plasma"}` gives `valid: true`.
-- [ ] 3.6 Test: node writes are validated (SPEC-009-R05)
+- [x] 3.6 Test: node writes are validated (SPEC-009-R05)
   - Requirements: SPEC-009-R05
   - Files: `internal/api/integration_test.go`
   - Do: `TestSchemaValidationOnWrite`, in dev mode as `TestCommitIsAtomic` is, using `sendWant`.
@@ -132,7 +132,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
       - `nodes`: the first R05 example (`/matrix` and `/volume_ul`; then `/volume_ul`; then 201). A refused create adds no node. An `add_node` change set with bad attrs and `schema_version_id` commits with 422 and stays `proposed`.
       - `edits`: on the created sample, `PATCH /v1/lineage/nodes/{id}` with the bad attrs is 422 and `max(rev)` stays 1. A proposed `update_node` with them commits with 422, stays `proposed`, and `max(rev)` stays 1. A label-only `PATCH` is 200. A `PATCH` with good attrs is 200.
   - Verify: fails only on the new test. It stays uncommitted until 3.8, which makes both subtests pass; 3.7 makes `nodes` pass (`go test -run 'TestSchemaValidationOnWrite/nodes' ./internal/api/`).
-- [ ] 3.7 Nodes
+- [x] 3.7 Nodes
   - Requirements: SPEC-009-R05, SPEC-009-R06
   - Files: `internal/api/lineage.go`, `internal/api/changesets.go`, `internal/api/schemas.go`, `internal/domain/lineage.go`
   - Do:
@@ -145,7 +145,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - `changeItem` gains `SchemaVersionID string` (`schema_version_id,omitempty`). `omitempty` keeps the items, and so the `items_sha256`, of existing change sets as they are. `validate` checks the UUID on `add_node`. `applyItem`'s `add_node` calls `insertSchemaNode`.
   - Verify: `go test -run 'TestSchemaValidationOnWrite/nodes' ./internal/api/` passes.
   - Integrity: yes
-- [ ] 3.8 Edits
+- [x] 3.8 Edits
   - Requirements: SPEC-009-R05, SPEC-009-R06
   - Files: `internal/api/changesets.go`, `internal/api/schemas.go`
   - Do:

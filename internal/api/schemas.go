@@ -431,6 +431,90 @@ func checkInstance(ctx context.Context, tx pgx.Tx, schemaVersionID string, insta
 	return v.SHA256, domain.ValidateInstance(s, instance), nil
 }
 
+// checkAgainst validates instance against a saved version and returns its
+// sha256. A problem is a *schemaInvalid whose subject is what + " " + the
+// version's ns/name@major.minor (SPEC-009-R05).
+func checkAgainst(ctx context.Context, tx pgx.Tx, schemaVersionID, what string, instance []byte) (string, error) {
+	sha, problems, err := checkInstance(ctx, tx, schemaVersionID, instance)
+	if err != nil {
+		return "", err
+	}
+	if len(problems) == 0 {
+		return sha, nil
+	}
+	v, err := loadSchemaVersion(ctx, tx, schemaVersionID, false)
+	if err != nil {
+		return "", err
+	}
+	return "", &schemaInvalid{
+		subject:  fmt.Sprintf("%s %s/%s@%d.%d", what, v.Namespace, v.Name, v.Major, v.Minor),
+		problems: problems,
+	}
+}
+
+// insertSchemaNode creates a lineage node pinned to a schema version, checks its
+// attrs against it and audits it, all in tx (SPEC-009-R05, R06). With no version
+// it is insertNode. The insert comes first so the database answers an
+// unpublished or wrong-kind version (R03) before the attrs are checked.
+func insertSchemaNode(ctx context.Context, tx pgx.Tx, p Principal, kind domain.NodeKind, label string, attrs map[string]any, schemaVersionID string) (string, error) {
+	if schemaVersionID == "" {
+		return insertNode(ctx, tx, p, kind, label, attrs)
+	}
+	if !kind.Valid() || label == "" {
+		return "", badRequest("lineage node needs a valid kind and a label")
+	}
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO lineage_nodes (tenant_id, kind, label, attrs, created_by, schema_version_id)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		p.Tenant, kind, label, attrs, p.Actor, schemaVersionID).Scan(&id); err != nil {
+		return "", err
+	}
+	instance, err := json.Marshal(attrs)
+	if err != nil {
+		return "", err
+	}
+	sha, err := checkAgainst(ctx, tx, schemaVersionID, "does not match", instance)
+	if err != nil {
+		return "", err
+	}
+	_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
+		Actor: p.Actor, Action: "lineage.node_created", EntityType: "lineage_node", EntityID: id,
+		Payload: map[string]any{"kind": kind, "label": label, "attrs": attrs,
+			"schema_version_id": schemaVersionID, "schema_sha256": sha},
+	})
+	return id, err
+}
+
+// recordSchema returns the schema version a record is pinned to and its sha256,
+// or "", "" when it has none. Only lineage nodes and runs can have one.
+func recordSchema(ctx context.Context, tx pgx.Tx, entityType, entityID string) (id, sha string, err error) {
+	var q string
+	switch entityType {
+	case "lineage_node":
+		q = `SELECT schema_version_id FROM lineage_nodes WHERE id = $1`
+	case "run":
+		q = `SELECT pv.params_schema_version_id FROM runs r
+			JOIN protocol_versions pv ON pv.tenant_id = r.tenant_id AND pv.id = r.protocol_version_id
+			WHERE r.id = $1`
+	default:
+		return "", "", nil
+	}
+	var ref *string
+	if err := tx.QueryRow(ctx, q, entityID).Scan(&ref); errors.Is(err, pgx.ErrNoRows) || (err == nil && ref == nil) {
+		return "", "", nil
+	} else if err != nil {
+		return "", "", err
+	}
+	if err := tx.QueryRow(ctx, `SELECT encode(sha256, 'hex') FROM schema_versions WHERE id = $1`, *ref).Scan(&sha); err != nil {
+		return "", "", err
+	}
+	return *ref, sha, nil
+}
+
 // checkDraft validates instance against unsaved text. The text must pass the
 // checks a save makes, and every registry version it refers to must be
 // published. It compiles under a preview URL and writes nothing.
