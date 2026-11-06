@@ -36,7 +36,10 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.13.2
-      - run: go test -race -count=1 ./...
+      # -p 1, as in `make test-integration`: packages share one database, and the
+      # owner's TRUNCATE ... CASCADE in the storage tests deadlocks with the API
+      # tests if packages run at the same time (SPEC-009).
+      - run: go test -race -count=1 -p 1 ./...
         env:
           LDE_TEST_DATABASE_URL: postgres://lde:lde@localhost:5432/lde?sslmode=disable
 
