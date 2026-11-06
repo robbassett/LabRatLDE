@@ -55,7 +55,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
 
 ## Phase 2: Domain
 
-- [ ] 2.1 Schema checks, validation and bundling
+- [x] 2.1 Schema checks, validation and bundling
   - Requirements: SPEC-009-R05, SPEC-009-R07, SPEC-009-R08, SPEC-009-R09 (support)
   - Files: `internal/domain/schema.go` (new), `go.mod`, `go.sum`
   - Do:
