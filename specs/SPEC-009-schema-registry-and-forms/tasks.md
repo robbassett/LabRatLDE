@@ -10,7 +10,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
 
 ## Phase 1: Database
 
-- [ ] 1.1 Test: published schema versions are immutable (SPEC-009-R01)
+- [x] 1.1 Test: published schema versions are immutable (SPEC-009-R01)
   - Requirements: SPEC-009-R01
   - Files: `internal/storage/integration_test.go`
   - Do: add constants `sampleSchema` and `qpcrSchema`, and these helpers:
@@ -28,7 +28,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Comment `// SPEC-009-R01`.
   - Verify: `make test-integration` fails only on the new test (`schemas` doesn't exist).
   - Integrity: yes
-- [ ] 1.2 Test: references must be published and match (SPEC-009-R03)
+- [x] 1.2 Test: references must be published and match (SPEC-009-R03)
   - Requirements: SPEC-009-R03
   - Files: `internal/storage/integration_test.go`
   - Do: `TestSchemaReferencesMustBePublished`. As alice (scientist), `lab/sample` applies to `sample`, with 1.0 published and 1.1 a draft. `lab/qpcr-params` applies to `run_params`, with 1.0 published and 1.1 a draft. A second tenant has its own published `lab/sample` 1.0. One table of cases, each in its own transaction, inserting directly:
@@ -43,7 +43,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Comment `// SPEC-009-R03`.
   - Verify: fails only on 1.1 and the new test.
   - Integrity: yes
-- [ ] 1.3 Migration `0022_schema_registry`
+- [x] 1.3 Migration `0022_schema_registry`
   - Requirements: SPEC-009-R01, SPEC-009-R02, SPEC-009-R03, SPEC-009-R10, SPEC-009-R11, SPEC-009-R12
   - Files: `internal/storage/migrations/0022_schema_registry.sql`, `cmd/server/iq.go`
   - Do: everything in design §2 "Migration `0022_schema_registry`", both SQL blocks, in one file with a header comment in the style of `0016`. Add `schemas_guard`, `schemas_no_truncate`, `schema_versions_guard`, `schema_versions_no_truncate`, `lineage_nodes_schema_ref`, `lineage_nodes_schema_pinned` and `protocol_versions_schema_ref` to `iqTriggers`.

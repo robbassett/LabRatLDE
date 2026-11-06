@@ -561,6 +561,169 @@ func TestProtocolVersionsAreAppendOnly(t *testing.T) {
 	}
 }
 
+const sampleSchema = `{"type":"object","required":["volume_ul"],"properties":{"volume_ul":{"type":"number","minimum":0,"x-lde-unit":"µL"},"matrix":{"enum":["plasma","serum"]}}}`
+const qpcrSchema = `{"type":"object","required":["cycles"],"properties":{"cycles":{"type":"integer","minimum":1}}}`
+
+// insertSchema takes tenant, namespace, name and what the schema applies to.
+func insertSchema(ctx context.Context, tx pgx.Tx, tenant, ns, name, appliesTo string) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `INSERT INTO schemas (tenant_id, namespace, name, applies_to, created_by)
+		VALUES ($1, $2, $3, $4, 'it@lab') RETURNING id`, tenant, ns, name, appliesTo).Scan(&id)
+	return id, err
+}
+
+// insertSchemaVersion inserts a draft version authored by it@lab.
+func insertSchemaVersion(ctx context.Context, tx pgx.Tx, tenant, schemaID string, major, minor int, body string) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `INSERT INTO schema_versions (tenant_id, schema_id, major, minor, body_text, author)
+		VALUES ($1, $2, $3, $4, $5, 'it@lab') RETURNING id`, tenant, schemaID, major, minor, body).Scan(&id)
+	return id, err
+}
+
+func publishSchemaVersion(ctx context.Context, tx pgx.Tx, id string) error {
+	_, err := tx.Exec(ctx, `UPDATE schema_versions SET status = 'published' WHERE id = $1`, id)
+	return err
+}
+
+// SPEC-009-R01
+func TestPublishedSchemaVersionsAreImmutable(t *testing.T) {
+	db := openTestDB(t)
+	tenant := newTenant(t, db)
+	ctx := context.Background()
+	alice := newPrincipal(t, db, tenant, "alice", "human", "scientist")
+	nobody := newPrincipal(t, db, tenant, "nobody", "human")
+	var id, draft string
+	err := db.WithTenant(ctx, tenant, alice, func(tx pgx.Tx) error {
+		sid, err := insertSchema(ctx, tx, tenant, "lab", "sample", "sample")
+		if err != nil {
+			return err
+		}
+		if id, err = insertSchemaVersion(ctx, tx, tenant, sid, 1, 0, sampleSchema); err != nil {
+			return err
+		}
+		// A draft may still be edited.
+		if _, err = tx.Exec(ctx, `UPDATE schema_versions SET body_text = $2 WHERE id = $1`, id, qpcrSchema); err != nil {
+			return err
+		}
+		if err = publishSchemaVersion(ctx, tx, id); err != nil {
+			return err
+		}
+		draft, err = insertSchemaVersion(ctx, tx, tenant, sid, 1, 1, sampleSchema)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A failing statement aborts its transaction, so each gets a fresh one.
+	asApp := func(p storage.Principal, stmt string, args ...any) error {
+		return db.WithTenant(ctx, tenant, p, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, stmt, args...); return err })
+	}
+	const (
+		updBody   = `UPDATE schema_versions SET body_text = '{}' WHERE id = $1`
+		updStatus = `UPDATE schema_versions SET status = 'draft' WHERE id = $1`
+		del       = `DELETE FROM schema_versions WHERE id = $1`
+		trunc     = `TRUNCATE schema_versions`
+	)
+	wantCode(t, "alice edits body", asApp(alice, updBody, id), storage.CodeAppendOnly)
+	wantCode(t, "alice reverts status", asApp(alice, updStatus, id), storage.CodeAppendOnly)
+	wantCode(t, "no-role principal edits body", asApp(nobody, updBody, id), storage.CodeAppendOnly)
+	wantCode(t, "alice deletes", asApp(alice, del, id), "42501")
+	wantCode(t, "alice truncates", asApp(alice, trunc), "42501")
+	for _, stmt := range []string{updBody, updStatus, del} {
+		_, err := db.Pool.Exec(ctx, stmt, id)
+		wantCode(t, "owner: "+stmt, err, storage.CodeAppendOnly)
+	}
+	// Returning the error rolls the transaction back, so the table survives.
+	err = db.WithOwner(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `TRUNCATE schema_versions CASCADE`)
+		return err
+	})
+	wantCode(t, "owner: TRUNCATE CASCADE", err, storage.CodeAppendOnly)
+	wantCode(t, "alice edits a draft", asApp(alice, `UPDATE schema_versions SET body_text = $2 WHERE id = $1`, draft, qpcrSchema), "")
+}
+
+// SPEC-009-R03
+func TestSchemaReferencesMustBePublished(t *testing.T) {
+	db := openTestDB(t)
+	tenant, other := newTenant(t, db), newTenant(t, db)
+	ctx := context.Background()
+	alice := newPrincipal(t, db, tenant, "alice", "human", "scientist")
+	var sample10, sample11, qpcr10, qpcr11, otherSample10 string
+	err := db.WithTenant(ctx, tenant, alice, func(tx pgx.Tx) error {
+		for _, s := range []struct {
+			name, appliesTo, body string
+			pub, draft            *string
+		}{
+			{"sample", "sample", sampleSchema, &sample10, &sample11},
+			{"qpcr-params", "run_params", qpcrSchema, &qpcr10, &qpcr11},
+		} {
+			sid, err := insertSchema(ctx, tx, tenant, "lab", s.name, s.appliesTo)
+			if err != nil {
+				return err
+			}
+			if *s.pub, err = insertSchemaVersion(ctx, tx, tenant, sid, 1, 0, s.body); err != nil {
+				return err
+			}
+			if err = publishSchemaVersion(ctx, tx, *s.pub); err != nil {
+				return err
+			}
+			if *s.draft, err = insertSchemaVersion(ctx, tx, tenant, sid, 1, 1, s.body); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WithTenant(ctx, other, as(other), func(tx pgx.Tx) error {
+		sid, err := insertSchema(ctx, tx, other, "lab", "sample", "sample")
+		if err != nil {
+			return err
+		}
+		if otherSample10, err = insertSchemaVersion(ctx, tx, other, sid, 1, 0, sampleSchema); err != nil {
+			return err
+		}
+		return publishSchemaVersion(ctx, tx, otherSample10)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, tc := range []struct {
+		name     string
+		node     string // kind of the node that references the version, or "" for a protocol version
+		ref      string
+		wantCode string
+	}{
+		{"sample node, draft version", "sample", sample11, "LDE06"},
+		{"reagent node, sample schema", "reagent", sample10, "LDE06"},
+		{"sample node, run_params schema", "sample", qpcr10, "LDE06"},
+		{"sample node, other tenant's version", "sample", otherSample10, "LDE06"},
+		{"sample node, published sample schema", "sample", sample10, ""},
+		{"protocol version, sample schema", "", sample10, "LDE06"},
+		{"protocol version, draft run_params schema", "", qpcr11, "LDE06"},
+		{"protocol version, published run_params schema", "", qpcr10, ""},
+	} {
+		// A failing statement aborts its transaction, so each case gets its own.
+		err := db.WithTenant(ctx, tenant, alice, func(tx pgx.Tx) error {
+			if tc.node != "" {
+				_, err := tx.Exec(ctx, `INSERT INTO lineage_nodes (tenant_id, kind, label, schema_version_id, created_by)
+					VALUES ($1, $2, 'n', $3, 'it@lab')`, tenant, tc.node, tc.ref)
+				return err
+			}
+			exp := newExperiment(t, tx, tenant, fmt.Sprintf("schema-ref-%d", i))
+			var node string
+			if err := tx.QueryRow(ctx, insertNode, tenant, "protocol").Scan(&node); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `INSERT INTO protocol_versions (tenant_id, experiment_id, version, protocol_md, node_id, params_schema_version_id, created_by)
+				VALUES ($1, $2, 1, 'x', $3, $4, 'it@lab')`, tenant, exp, node, tc.ref)
+			return err
+		})
+		wantCode(t, tc.name, err, tc.wantCode)
+	}
+}
+
 // SPEC-003-R03
 func TestProtocolVersionsAreGapless(t *testing.T) {
 	db := openTestDB(t)
