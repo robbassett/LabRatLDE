@@ -119,8 +119,12 @@ The UI sample schema text used in cases 1, 2 and 8 (paste it as one line):
   1. Create a schema `lab/refs` applying to `sample`, then for each body below create a draft and try to publish it (UI **Publish**, or API):
      ```bash
      curl -s "${A[@]}" $API/schemas -d '{"namespace":"lab","name":"refs","applies_to":"sample"}' >/dev/null
-     try() { n=$1; id=$(jq -n --argjson n "$n" --arg b "$2" '{major:$n,minor:0,body_text:$b}' | curl -s "${A[@]}" $API/schemas/lab/refs/versions -d @- | jq -r .id)
-             curl -s -w ' [%{http_code}]\n' "${A[@]}" -X POST $API/schema-versions/$id/publish; }
+     # Versions are permanent: to repeat a try, give it an unused major number (e.g. try 14 ...).
+     try() { n=$1; r=$(jq -n --argjson n "$n" --arg b "$2" '{major:$n,minor:0,body_text:$b}' | curl -s -w '\n%{http_code}' "${A[@]}" $API/schemas/lab/refs/versions -d @-)
+             code=${r##*$'\n'}; body=${r%$'\n'*}
+             if [ "$code" != 201 ]; then echo "try $n: draft not created [$code] $body"; return; fi
+             id=$(jq -r .id <<<"$body")
+             echo -n "try $n: "; curl -s -w ' [%{http_code}]\n' "${A[@]}" -X POST $API/schema-versions/$id/publish; }
      try 1 '{"$ref":"http://example.com/x.json"}'
      try 2 '{"$ref":"file:///etc/passwd"}'
      try 3 '{"$ref":"lde://schemas/lab/none/1.0"}'
