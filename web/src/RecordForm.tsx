@@ -24,6 +24,8 @@ export default function RecordForm({
     <div className="record-form">
       <Form
         schema={schema}
+        // The default id prefix "root" would match the app's #root styles.
+        idPrefix="record"
         formData={value}
         validator={schemaValidator}
         uiSchema={uiSchemaFor(schema)}

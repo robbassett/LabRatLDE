@@ -583,6 +583,10 @@ export function editRunParams(id: string, params: Record<string, unknown>, reaso
   return patch(`/v1/runs/${encodeURIComponent(id)}/params`, { params, reason });
 }
 
+export function transitionRun(id: string, to: string, reason: string): Promise<Run> {
+  return post(`/v1/runs/${encodeURIComponent(id)}/transitions`, { to, reason });
+}
+
 export function editExperimentTitle(id: string, title: string, reason: string): Promise<EditResult> {
   return patch(`/v1/experiments/${encodeURIComponent(id)}`, { title, reason });
 }

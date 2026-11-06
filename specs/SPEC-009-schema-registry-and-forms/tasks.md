@@ -219,7 +219,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - `RecordForm({schema, value, onChange, problems, readOnly?, warnOnly?})`, as design §3. With `warnOnly`, the problems appear with a "Not checked until the run starts" note.
     - `BottomPanel` keeps problems per source from that event and replaces the fixed "No problems" with a table of source, pointer and message. "No problems" stays when there are none. The tab shows the count when it isn't zero, as "Problems (2)".
   - Verify: `npm run build`. Exercised by 4.4.
-- [ ] 4.4 Forms when editing
+- [x] 4.4 Forms when editing
   - Requirements: SPEC-009-R09
   - Files: `web/src/EditField.tsx`, `web/src/LineageView.tsx`, `web/src/RunView.tsx`
   - Do:
