@@ -249,7 +249,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Fields: label; inputs (one node id per line); and `RecordForm` with `warnOnly` when `params_schema_version_id` is set, otherwise a JSON box defaulting to `{}`.
     - It creates the run even with problems. On success, open the run tab.
   - Verify: with an experiment whose frontmatter names `lab/qpcr-params@1.0`, the form shows Cycles as required with a warning, and the run is created without it. An experiment with no schema still creates a run from the JSON box.
-- [ ] 4.7 Schema browser
+- [x] 4.7 Schema browser
   - Requirements: SPEC-009-R09 (support), SPEC-009-R10
   - Files: `web/src/SchemasView.tsx` (new), `web/src/SchemaView.tsx` (new), `web/src/tabs.ts`, `web/src/Workspace.tsx`, `web/src/Explorer.tsx`
   - Do: as design §3 "Schema browser".
@@ -257,7 +257,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - The tab `schema` (id `ns/name`): a versions table (version, status, author, hash, published time).
     - Selecting a version shows a field-docs table (field, type, required, unit, description) and a sample `RecordForm` that saves nothing, with `useSchemaValidation` showing its errors.
   - Verify: browse to `lab/sample`, see its fields and `µL`, and try the sample form. A new schema appears in the list.
-- [ ] 4.8 Draft editor
+- [x] 4.8 Draft editor
   - Requirements: SPEC-009-R08, SPEC-009-R09, SPEC-009-R10
   - Files: `web/src/SchemaDraftEditor.tsx` (new), `web/src/SchemaView.tsx`, `web/src/styles.css`
   - Do: as design §3 "Draft editor".
