@@ -17,7 +17,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-006 | [Identity and roles](implemented/SPEC-006-identity-and-roles/requirements.md) | Implemented |
 | SPEC-007 | [Revisions, change sets and notes](implemented/SPEC-007-revisions-and-change-sets/requirements.md) | Implemented |
 | SPEC-008 | [Electronic signatures v2](implemented/SPEC-008-electronic-signatures/requirements.md) | Implemented |
-| SPEC-009 | [Schema registry and schema-driven forms](SPEC-009-schema-registry-and-forms/requirements.md) | Approved |
+| SPEC-009 | [Schema registry and schema-driven forms](implemented/SPEC-009-schema-registry-and-forms/requirements.md) | Implemented |
 | SPEC-010 | [Schema governance namespaces](SPEC-010-schema-governance/requirements.md) | Draft |
 | SPEC-011 | [Query and comparison](SPEC-011-query-and-comparison/requirements.md) | Draft |
 | SPEC-012 | [Raw file custody](SPEC-012-raw-file-custody/requirements.md) | Draft |
@@ -49,7 +49,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | Protocols as code | Built | Append-only, gapless versions with a DB-computed SHA-256; each run pins its version immutably (SPEC-003) |
 | Identity | Dev headers only | `LDE_ENV=prod` refuses to serve |
 | Web UI | Not started | Core to the product (decision D7) |
-| Schemas | Built | JSON Schema versions, immutable once published; attrs and params validated on write; schema-driven forms ([SPEC-009](SPEC-009-schema-registry-and-forms/requirements.md)) |
+| Schemas | Built | JSON Schema versions, immutable once published; attrs and params validated on write; schema-driven forms ([SPEC-009](implemented/SPEC-009-schema-registry-and-forms/requirements.md)) |
 | Governance tiers | Not started | Any human scientist may publish; no namespace levels or Steward yet (SPEC-010) |
 | Revisions / Git-like workflow | Not started | |
 | MCP / agents, pre-flight checks | Not started | |

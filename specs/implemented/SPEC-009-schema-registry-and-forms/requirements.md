@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Approved |
+| **Status** | Implemented |
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-11-06 |
 | **Regulatory refs** | 21 CFR 11.10(h) (input checks), 11.10(e), 11.10(g) |

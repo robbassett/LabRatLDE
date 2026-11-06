@@ -4,7 +4,7 @@ A schema says what a record must contain: what a sample's `attrs` hold, or
 what a run's `params` hold. Schemas are JSON Schema 2020-12 documents kept in
 a registry, versioned, and immutable once published. The server checks every
 write against the schema a record names, and the web UI draws a form from the
-same schema. This is the design of [SPEC-009](../specs/SPEC-009-schema-registry-and-forms/requirements.md);
+same schema. This is the design of [SPEC-009](../specs/implemented/SPEC-009-schema-registry-and-forms/requirements.md);
 this page describes what it delivers.
 
 Which namespaces may publish, and compatibility rules between versions, are
