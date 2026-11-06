@@ -113,7 +113,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - These each fail with 422: a `$ref` to `http://example.com/x.json`, to `file:///etc/passwd`, to `lde://schemas/lab/none/1.0`, to a draft version, or to `#/$defs/missing`; and a body containing `$id`.
     - A `$ref` to the published version publishes. A second publish is 409.
   - Integrity: yes
-- [ ] 3.5 Dry run
+- [x] 3.5 Dry run
   - Requirements: SPEC-009-R09 (support)
   - Files: `internal/api/schemas.go`, `internal/api/server.go`
   - Do:

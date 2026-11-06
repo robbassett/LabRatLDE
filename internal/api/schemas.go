@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -412,6 +413,95 @@ func (s *Server) putSchemaVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// checkInstance validates instance against one saved version, compiled as its
+// publish compiled it. It returns the version's sha256 and the problems, which
+// are empty when the instance is valid (SPEC-009-R09).
+func checkInstance(ctx context.Context, tx pgx.Tx, schemaVersionID string, instance []byte) (sha string, problems []domain.SchemaProblem, err error) {
+	v, err := loadSchemaVersion(ctx, tx, schemaVersionID, false)
+	if err != nil {
+		return "", nil, err // pgx.ErrNoRows is 404
+	}
+	load := func(url string) (string, error) { return registryText(ctx, tx, url) }
+	s, err := domain.CompileSchema(domain.SchemaURL(v.Namespace, v.Name, v.Major, v.Minor), v.BodyText, load)
+	if err != nil {
+		return "", nil, &schemaInvalid{subject: "schema cannot be compiled", problems: []domain.SchemaProblem{{Message: err.Error()}}}
+	}
+	return v.SHA256, domain.ValidateInstance(s, instance), nil
+}
+
+// checkDraft validates instance against unsaved text. The text must pass the
+// checks a save makes, and every registry version it refers to must be
+// published. It compiles under a preview URL and writes nothing.
+func checkDraft(ctx context.Context, tx pgx.Tx, bodyText string, instance []byte) ([]domain.SchemaProblem, error) {
+	if problems := domain.CheckSchema(bodyText); len(problems) > 0 {
+		return nil, &schemaInvalid{subject: "schema is not valid", problems: problems}
+	}
+	refs, problems := domain.SchemaRefs(bodyText)
+	if len(problems) > 0 {
+		return nil, &schemaInvalid{subject: "schema is not valid", problems: problems}
+	}
+	load := func(url string) (string, error) { return registryText(ctx, tx, url) }
+	for _, url := range refs {
+		if _, err := load(url); err != nil {
+			problems = append(problems, domain.SchemaProblem{Message: err.Error()})
+		}
+	}
+	if len(problems) > 0 {
+		return nil, &schemaInvalid{subject: "schema is not valid", problems: problems}
+	}
+	s, err := domain.CompileSchema(domain.SchemaURL("draft", "preview", 0, 0), bodyText, load)
+	if err != nil {
+		return nil, &schemaInvalid{subject: "schema cannot be compiled", problems: []domain.SchemaProblem{{Message: err.Error()}}}
+	}
+	return domain.ValidateInstance(s, instance), nil
+}
+
+// validateSchema dry-runs an instance against a saved version or a draft's
+// text. It answers 200 with the problems, and reads only.
+//
+//	POST /v1/schemas/validate  {"schema_version_id", "instance"} or {"body_text", "instance"}
+func (s *Server) validateSchema(w http.ResponseWriter, r *http.Request) {
+	ctx, p := r.Context(), principal(r.Context())
+	var req struct {
+		SchemaVersionID *string         `json:"schema_version_id"`
+		BodyText        *string         `json:"body_text"`
+		Instance        json.RawMessage `json:"instance"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if (req.SchemaVersionID == nil) == (req.BodyText == nil) {
+		s.fail(w, r, badRequest("exactly one of schema_version_id and body_text is required"))
+		return
+	}
+	if len(req.Instance) == 0 {
+		s.fail(w, r, badRequest("instance is required"))
+		return
+	}
+	var problems []domain.SchemaProblem
+	err := s.db.WithTenant(ctx, p.Tenant, p.As, func(tx pgx.Tx) error {
+		var err error
+		if req.BodyText != nil {
+			problems, err = checkDraft(ctx, tx, *req.BodyText, req.Instance)
+			return err
+		}
+		if !validUUID(*req.SchemaVersionID) {
+			return notFound("schema version")
+		}
+		_, problems, err = checkInstance(ctx, tx, *req.SchemaVersionID, req.Instance)
+		return err
+	})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if problems == nil {
+		problems = []domain.SchemaProblem{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": len(problems) == 0, "errors": problems})
 }
 
 // publishSchemaVersion makes a draft immutable once every registry version it

@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	v1.HandleFunc("GET /v1/schema-versions/{id}", s.getSchemaVersion)
 	v1.HandleFunc("PUT /v1/schema-versions/{id}", s.putSchemaVersion)
 	v1.HandleFunc("POST /v1/schema-versions/{id}/publish", s.publishSchemaVersion)
+	v1.HandleFunc("POST /v1/schemas/validate", s.validateSchema)
 
 	v1.HandleFunc("POST /v1/change-sets", s.createChangeSet)
 	v1.HandleFunc("GET /v1/change-sets", s.listChangeSets)
