@@ -271,7 +271,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
 
 ## Phase 5: Documentation
 
-- [ ] 5.1 Documentation
+- [x] 5.1 Documentation
   - Requirements: SPEC-009-R01–R13
   - Files: `docs/schemas.md` (new), `docs/schema.sql`, `README.md`, `specs/ROADMAP.md`
   - Do:

@@ -680,6 +680,24 @@ $$;
 
 
 --
+-- Name: lineage_nodes_schema_ref(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lineage_nodes_schema_ref() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'node %: schema_version_id is fixed when the node is created', OLD.id USING ERRCODE = 'LDE03';
+    END IF;
+    PERFORM public.schema_ref_check(NEW.tenant_id, NEW.schema_version_id, NEW.kind);
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: lineage_reject_cycle(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -842,6 +860,21 @@ BEGIN
         RAISE EXCEPTION 'protocol versions are immutable (TRUNCATE rejected)' USING ERRCODE = 'LDE03';
     END IF;
     RAISE EXCEPTION 'protocol version % is immutable (% rejected)', OLD.id, TG_OP USING ERRCODE = 'LDE03';
+END;
+$$;
+
+
+--
+-- Name: protocol_versions_schema_ref(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protocol_versions_schema_ref() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM public.schema_ref_check(NEW.tenant_id, NEW.params_schema_version_id, 'run_params');
+    RETURN NEW;
 END;
 $$;
 
@@ -1075,6 +1108,99 @@ BEGIN
         RAISE EXCEPTION 'run %: signed_from is set only by signing', OLD.id USING ERRCODE = 'LDE03';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: schema_ref_check(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.schema_ref_check(t uuid, v uuid, want text) RETURNS void
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM public.schema_versions sv
+        JOIN public.schemas s ON s.tenant_id = sv.tenant_id AND s.id = sv.schema_id
+        WHERE sv.tenant_id = t AND sv.id = v AND sv.status = 'published' AND s.applies_to = want
+    ) THEN
+        RAISE EXCEPTION 'schema version % is not a published schema for %', v, want USING ERRCODE = 'LDE06';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: schema_versions_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.schema_versions_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF TG_OP = 'TRUNCATE' THEN
+        RAISE EXCEPTION 'schema versions are never truncated' USING ERRCODE = 'LDE03';
+    END IF;
+    IF TG_OP <> 'INSERT' AND OLD.status = 'published' THEN
+        RAISE EXCEPTION 'schema version % is published and immutable (% rejected)', OLD.id, TG_OP USING ERRCODE = 'LDE03';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    PERFORM lde_require_role('scientist');
+    IF TG_OP = 'INSERT' THEN
+        IF current_user = 'lde_app' THEN
+            IF NEW.status <> 'draft' THEN
+                RAISE EXCEPTION 'a schema version starts as a draft' USING ERRCODE = 'check_violation';
+            END IF;
+            NEW.author_id := lde_current_principal();
+            NEW.created_at := clock_timestamp();
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF (NEW.id, NEW.tenant_id, NEW.schema_id, NEW.major, NEW.minor, NEW.author, NEW.author_id, NEW.created_at)
+       IS DISTINCT FROM
+       (OLD.id, OLD.tenant_id, OLD.schema_id, OLD.major, OLD.minor, OLD.author, OLD.author_id, OLD.created_at) THEN
+        RAISE EXCEPTION 'schema version %: identity and authorship never change', OLD.id USING ERRCODE = 'LDE03';
+    END IF;
+    IF current_user = 'lde_app' THEN
+        IF NEW.status = 'draft' THEN
+            IF lde_current_principal() IS DISTINCT FROM OLD.author_id THEN
+                RAISE EXCEPTION 'only the author of schema version % may change its draft', OLD.id USING ERRCODE = 'LDE05';
+            END IF;
+        ELSE
+            IF NEW.body_text IS DISTINCT FROM OLD.body_text THEN
+                RAISE EXCEPTION 'schema version %: publishing cannot change the text', OLD.id USING ERRCODE = 'LDE03';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM principals pr WHERE pr.id = lde_current_principal() AND pr.kind = 'human' AND pr.enabled) THEN
+                RAISE EXCEPTION 'only a human may publish a schema version' USING ERRCODE = 'LDE05';
+            END IF;
+            NEW.published_by := lde_current_principal();
+            NEW.published_at := clock_timestamp();
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: schemas_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.schemas_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        PERFORM lde_require_role('scientist');
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'a schema''s identity never changes (% rejected)', TG_OP USING ERRCODE = 'LDE03';
 END;
 $$;
 
@@ -1613,6 +1739,7 @@ CREATE TABLE public.lineage_nodes (
     attrs jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    schema_version_id uuid,
     CONSTRAINT lineage_nodes_kind_check CHECK ((kind = ANY (ARRAY['sample'::text, 'reagent'::text, 'protocol'::text, 'run'::text, 'instrument'::text, 'dataset'::text, 'analysis'::text])))
 );
 
@@ -1676,6 +1803,7 @@ CREATE TABLE public.protocol_versions (
     node_id uuid NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    params_schema_version_id uuid,
     CONSTRAINT protocol_versions_protocol_md_check CHECK ((protocol_md <> ''::text)),
     CONSTRAINT protocol_versions_version_check CHECK ((version > 0))
 );
@@ -1764,6 +1892,55 @@ CREATE TABLE public.schema_migrations (
     version text NOT NULL,
     applied_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: schema_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schema_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    schema_id uuid NOT NULL,
+    major integer NOT NULL,
+    minor integer NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    body_text text NOT NULL,
+    body jsonb GENERATED ALWAYS AS ((body_text)::jsonb) STORED,
+    sha256 bytea GENERATED ALWAYS AS (public.protocol_sha256(body_text)) STORED,
+    author text NOT NULL,
+    author_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    published_by uuid,
+    published_at timestamp with time zone,
+    CONSTRAINT schema_versions_body_check CHECK ((jsonb_typeof(body) = 'object'::text)),
+    CONSTRAINT schema_versions_check CHECK (((status = 'published'::text) = (published_at IS NOT NULL))),
+    CONSTRAINT schema_versions_major_check CHECK ((major >= 0)),
+    CONSTRAINT schema_versions_minor_check CHECK ((minor >= 0)),
+    CONSTRAINT schema_versions_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'published'::text])))
+);
+
+ALTER TABLE ONLY public.schema_versions FORCE ROW LEVEL SECURITY;
+
+
+--
+-- Name: schemas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schemas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    namespace text NOT NULL,
+    name text NOT NULL,
+    applies_to text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT schemas_applies_to_check CHECK ((applies_to = ANY (ARRAY['sample'::text, 'reagent'::text, 'protocol'::text, 'run'::text, 'instrument'::text, 'dataset'::text, 'analysis'::text, 'run_params'::text]))),
+    CONSTRAINT schemas_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,127}$'::text)),
+    CONSTRAINT schemas_namespace_check CHECK ((namespace ~ '^~?[a-z0-9][a-z0-9._@+-]{0,127}$'::text))
+);
+
+ALTER TABLE ONLY public.schemas FORCE ROW LEVEL SECURITY;
 
 
 --
@@ -2122,6 +2299,54 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: schema_versions schema_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_id_key UNIQUE (tenant_id, id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_schema_id_major_minor_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_schema_id_major_minor_key UNIQUE (tenant_id, schema_id, major, minor);
+
+
+--
+-- Name: schemas schemas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schemas
+    ADD CONSTRAINT schemas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schemas schemas_tenant_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schemas
+    ADD CONSTRAINT schemas_tenant_id_id_key UNIQUE (tenant_id, id);
+
+
+--
+-- Name: schemas schemas_tenant_id_namespace_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schemas
+    ADD CONSTRAINT schemas_tenant_id_namespace_name_key UNIQUE (tenant_id, namespace, name);
+
+
+--
 -- Name: signature_challenges signature_challenges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2438,6 +2663,20 @@ CREATE TRIGGER lineage_nodes_role_gate BEFORE INSERT OR DELETE OR UPDATE ON publ
 
 
 --
+-- Name: lineage_nodes lineage_nodes_schema_pinned; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lineage_nodes_schema_pinned BEFORE UPDATE OF schema_version_id ON public.lineage_nodes FOR EACH ROW WHEN ((old.schema_version_id IS DISTINCT FROM new.schema_version_id)) EXECUTE FUNCTION public.lineage_nodes_schema_ref();
+
+
+--
+-- Name: lineage_nodes lineage_nodes_schema_ref; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lineage_nodes_schema_ref BEFORE INSERT ON public.lineage_nodes FOR EACH ROW WHEN ((new.schema_version_id IS NOT NULL)) EXECUTE FUNCTION public.lineage_nodes_schema_ref();
+
+
+--
 -- Name: lineage_nodes lineage_nodes_sealed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2543,6 +2782,13 @@ CREATE TRIGGER protocol_versions_role_gate BEFORE INSERT OR DELETE OR UPDATE ON 
 
 
 --
+-- Name: protocol_versions protocol_versions_schema_ref; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER protocol_versions_schema_ref BEFORE INSERT ON public.protocol_versions FOR EACH ROW WHEN ((new.params_schema_version_id IS NOT NULL)) EXECUTE FUNCTION public.protocol_versions_schema_ref();
+
+
+--
 -- Name: record_revisions record_revisions_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2624,6 +2870,34 @@ CREATE TRIGGER runs_signed_immutable BEFORE DELETE OR UPDATE ON public.runs FOR 
 --
 
 CREATE TRIGGER runs_signing_columns BEFORE UPDATE ON public.runs FOR EACH ROW EXECUTE FUNCTION public.runs_signing_columns();
+
+
+--
+-- Name: schema_versions schema_versions_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER schema_versions_guard BEFORE INSERT OR DELETE OR UPDATE ON public.schema_versions FOR EACH ROW EXECUTE FUNCTION public.schema_versions_guard();
+
+
+--
+-- Name: schema_versions schema_versions_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER schema_versions_no_truncate BEFORE TRUNCATE ON public.schema_versions FOR EACH STATEMENT EXECUTE FUNCTION public.schema_versions_guard();
+
+
+--
+-- Name: schemas schemas_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER schemas_guard BEFORE INSERT OR DELETE OR UPDATE ON public.schemas FOR EACH ROW EXECUTE FUNCTION public.schemas_guard();
+
+
+--
+-- Name: schemas schemas_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER schemas_no_truncate BEFORE TRUNCATE ON public.schemas FOR EACH STATEMENT EXECUTE FUNCTION public.schemas_guard();
 
 
 --
@@ -2869,6 +3143,14 @@ ALTER TABLE ONLY public.lineage_nodes
 
 
 --
+-- Name: lineage_nodes lineage_nodes_tenant_id_schema_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lineage_nodes
+    ADD CONSTRAINT lineage_nodes_tenant_id_schema_version_id_fkey FOREIGN KEY (tenant_id, schema_version_id) REFERENCES public.schema_versions(tenant_id, id);
+
+
+--
 -- Name: notes notes_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2914,6 +3196,14 @@ ALTER TABLE ONLY public.protocol_versions
 
 ALTER TABLE ONLY public.protocol_versions
     ADD CONSTRAINT protocol_versions_tenant_id_node_id_fkey FOREIGN KEY (tenant_id, node_id) REFERENCES public.lineage_nodes(tenant_id, id);
+
+
+--
+-- Name: protocol_versions protocol_versions_tenant_id_params_schema_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.protocol_versions
+    ADD CONSTRAINT protocol_versions_tenant_id_params_schema_version_id_fkey FOREIGN KEY (tenant_id, params_schema_version_id) REFERENCES public.schema_versions(tenant_id, id);
 
 
 --
@@ -2986,6 +3276,46 @@ ALTER TABLE ONLY public.runs
 
 ALTER TABLE ONLY public.runs
     ADD CONSTRAINT runs_tenant_id_node_id_fkey FOREIGN KEY (tenant_id, node_id) REFERENCES public.lineage_nodes(tenant_id, id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_author_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_author_id_fkey FOREIGN KEY (tenant_id, author_id) REFERENCES public.principals(tenant_id, id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_published_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_published_by_fkey FOREIGN KEY (tenant_id, published_by) REFERENCES public.principals(tenant_id, id);
+
+
+--
+-- Name: schema_versions schema_versions_tenant_id_schema_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_versions
+    ADD CONSTRAINT schema_versions_tenant_id_schema_id_fkey FOREIGN KEY (tenant_id, schema_id) REFERENCES public.schemas(tenant_id, id);
+
+
+--
+-- Name: schemas schemas_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schemas
+    ADD CONSTRAINT schemas_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
 
 
 --
@@ -3234,6 +3564,20 @@ CREATE POLICY owner_maintenance ON public.runs TO lde USING (true) WITH CHECK (t
 
 
 --
+-- Name: schema_versions owner_maintenance; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_maintenance ON public.schema_versions TO lde USING (true) WITH CHECK (true);
+
+
+--
+-- Name: schemas owner_maintenance; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY owner_maintenance ON public.schemas TO lde USING (true) WITH CHECK (true);
+
+
+--
 -- Name: signature_challenges owner_maintenance; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -3290,6 +3634,18 @@ ALTER TABLE public.role_grants ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: schema_versions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.schema_versions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: schemas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.schemas ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: signature_challenges; Type: ROW SECURITY; Schema: public; Owner: -
@@ -3412,6 +3768,20 @@ CREATE POLICY tenant_isolation ON public.role_grants TO lde_app USING ((tenant_i
 --
 
 CREATE POLICY tenant_isolation ON public.runs TO lde_app USING ((tenant_id = public.lde_current_tenant())) WITH CHECK ((tenant_id = public.lde_current_tenant()));
+
+
+--
+-- Name: schema_versions tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.schema_versions TO lde_app USING ((tenant_id = public.lde_current_tenant())) WITH CHECK ((tenant_id = public.lde_current_tenant()));
+
+
+--
+-- Name: schemas tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.schemas TO lde_app USING ((tenant_id = public.lde_current_tenant())) WITH CHECK ((tenant_id = public.lde_current_tenant()));
 
 
 --
@@ -3565,6 +3935,13 @@ GRANT ALL ON FUNCTION public.lineage_node_sealed(node uuid) TO lde_app;
 --
 
 GRANT ALL ON FUNCTION public.protocol_sha256(t text) TO lde_app;
+
+
+--
+-- Name: FUNCTION schema_ref_check(t uuid, v uuid, want text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.schema_ref_check(t uuid, v uuid, want text) TO lde_app;
 
 
 --
@@ -3810,6 +4187,34 @@ GRANT UPDATE(revoke_reason) ON TABLE public.role_grants TO lde_app;
 --
 
 GRANT SELECT,INSERT,UPDATE ON TABLE public.runs TO lde_app;
+
+
+--
+-- Name: TABLE schema_versions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.schema_versions TO lde_app;
+
+
+--
+-- Name: COLUMN schema_versions.status; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT UPDATE(status) ON TABLE public.schema_versions TO lde_app;
+
+
+--
+-- Name: COLUMN schema_versions.body_text; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT UPDATE(body_text) ON TABLE public.schema_versions TO lde_app;
+
+
+--
+-- Name: TABLE schemas; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.schemas TO lde_app;
 
 
 --

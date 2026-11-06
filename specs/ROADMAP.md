@@ -49,7 +49,8 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | Protocols as code | Built | Append-only, gapless versions with a DB-computed SHA-256; each run pins its version immutably (SPEC-003) |
 | Identity | Dev headers only | `LDE_ENV=prod` refuses to serve |
 | Web UI | Not started | Core to the product (decision D7) |
-| Schemas and governance tiers | Not started | `attrs` and `params` are unvalidated |
+| Schemas | Built | JSON Schema versions, immutable once published; attrs and params validated on write; schema-driven forms ([SPEC-009](SPEC-009-schema-registry-and-forms/requirements.md)) |
+| Governance tiers | Not started | Any human scientist may publish; no namespace levels or Steward yet (SPEC-010) |
 | Revisions / Git-like workflow | Not started | |
 | MCP / agents, pre-flight checks | Not started | |
 | Open exports, chain anchoring | Not started | |

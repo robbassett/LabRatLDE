@@ -337,7 +337,8 @@ Configuration is environment-only; see [`.env.example`](.env.example).
 | `POST`/`GET` | `/v1/runs/{id}/signatures` | Apply the next signing step, or list a run's signatures (see [docs/signatures.md](docs/signatures.md)) |
 | `GET`  | `/v1/inbox/signatures` | Runs waiting for the caller's signature |
 | `PATCH` | `/v1/experiments/{id}/signing-policy` | Change an experiment's signing policy (`qa`/`admin` in GxP; reason) |
-| `POST` | `/v1/lineage/nodes` | Add a sample, reagent, dataset, … |
+| `POST` | `/v1/lineage/nodes` | Add a sample, reagent, dataset, …; optional `schema_version_id` validates `attrs` |
+| | `/v1/schemas`, `/v1/schema-versions/{id}` | Schema registry: create, draft, publish, dry-run validation (see [docs/schemas.md](docs/schemas.md)) |
 | `POST` | `/v1/lineage/edges` | Link nodes (cycles → `409`) |
 | `GET`  | `/v1/lineage/{id}` | Provenance closure; `?direction=upstream\|downstream\|both` |
 | `POST` | `/v1/instruments` | Register an instrument |
@@ -388,6 +389,7 @@ planned | running | paused ──► aborted        (requires a reason; terminal
 ├── pkg/frontmatter/              # Markdown + YAML frontmatter parser
 ├── tools/verify_audit.py         # standalone chain verifier (stdlib only)
 ├── docs/audit-chain.md           # normative digest spec + threat model
+├── docs/schemas.md               # schema registry, versions, forms and validation
 ├── specs/                        # EARS specs that drive all work (TEMPLATE/, ROADMAP.md, implemented/)
 ├── examples/                     # sample protocol and instrument stream
 ├── web/                          # frontend (planned)
@@ -418,6 +420,7 @@ honest stubs. Do not use for regulated work yet.
 | Validation documentation (risk assessment, IQ/OQ protocols, expected vs actual results) | 🔜 roadmap (SPEC-020) |
 | Web UI: workspace shell (explorer, tabs, lineage, audit viewer; SPEC-005) | ✅ implemented; editing since SPEC-007, and a Playwright test since SPEC-008. Charts are on the roadmap |
 | Revisions, change sets and notes: append-only history, reviewed edits, diff and blame (SPEC-007) | 🚧 in progress. Corrections to signed records go through reviewed change sets (SPEC-008). See [docs/revisions.md](docs/revisions.md) |
+| Schema registry and schema-driven forms: JSON Schema 2020-12 versions, immutable once published; records and run params validated on write; forms, schema browser and draft editor in the UI (SPEC-009) | ✅ implemented. See [docs/schemas.md](docs/schemas.md) |
 
 The phased plan, design decisions and reserved spec numbers are in
 [`specs/ROADMAP.md`](specs/ROADMAP.md).
