@@ -4,8 +4,8 @@ Requirements: [requirements.md](requirements.md)
 
 ## 1. Simplicity budget
 
-- Approach: tables `schemas` and `schema_versions`, with a generated SHA-256 and a generated `jsonb` over the stored text. Nodes and protocol versions get a nullable reference, guarded by a trigger requiring published status and a matching kind; a run's schema is its pinned protocol version's. Validation uses one Go library behind a few functions in `internal/domain`. Forms are one small React component driven directly by the schema, plus a few `x-lde-*` keywords, validated by the same Go code through the dry-run endpoint.
-- Not doing: a custom schema language, a form designer, a form library, a second validator in the browser, validation inside PostgreSQL, or a schema column on `runs`.
+- Approach: tables `schemas` and `schema_versions`, with a generated SHA-256 and a generated `jsonb` over the stored text. Nodes and protocol versions get a nullable reference, guarded by a trigger requiring published status and a matching kind; a run's schema is its pinned protocol version's. Validation uses one Go library behind a few functions in `internal/domain`, and the Go server is the only validator of record. Forms are stock `@rjsf/core`, driven by the schema plus a few `x-lde-*` keywords. Their errors come from the same Go code through the dry-run endpoint. A small adapter supplies the browser-side validator rjsf needs for drawing, without `unsafe-eval`. A planned run may hold incomplete params; starting it checks them.
+- Not doing: a custom schema language, a form designer, an in-house form renderer, browser-side error messages, validation inside PostgreSQL, a schema column on `runs`, or starter schemas (SPEC-024).
 
 ## 2. Data and interfaces
 
@@ -125,7 +125,7 @@ Then, for both tables: `ENABLE` and `FORCE ROW LEVEL SECURITY`, the `tenant_isol
 
 `body` is generated, so it can never disagree with the text that `sha256` covers. Text that isn't JSON fails with `22P02` and a non-object with `23514`; the API checks both first (R08), so these are the second line.
 
-### Migration `0023_schema_references`
+The same file then adds the references:
 
 ```sql
 ALTER TABLE lineage_nodes ADD COLUMN schema_version_id uuid;
@@ -206,6 +206,14 @@ func CompileSchema(url, bodyText string, load func(url string) (string, error)) 
 // ValidateInstance returns one problem per failed rule, sorted by pointer, then message.
 func ValidateInstance(s *jsonschema.Schema, instance []byte) []SchemaProblem
 
+// BundleSchema returns one self-contained document for the form. Each lde://
+// version the body reaches, transitively, goes into the root $defs under the
+// key "lde:<ns>:<name>:<major>.<minor>". Every $ref to it becomes a local
+// pointer ("#/$defs/<key>" plus its fragment, escaped per RFC 6901), and the
+// local refs inside an embedded document gain that prefix. A ref load can't
+// find (a draft's) is left as it is.
+func BundleSchema(bodyText string, load func(url string) (string, error)) (map[string]any, error)
+
 // ParseSchemaName parses "ns/name@major.minor"; ParseSchemaURL parses its lde:// form.
 func ParseSchemaName(s string) (ns, name string, major, minor int, ok bool)
 func ParseSchemaURL(s string) (ns, name string, major, minor int, ok bool)
@@ -240,10 +248,10 @@ The status is `422` for R04, R05, R07 and R08, with this body:
 | `GET /v1/schemas?applies_to=&cursor=&limit=` | | A page of schemas, oldest first, each with `latest_published: {id, major, minor, sha256}` or null (the highest published version). |
 | `GET /v1/schemas/{ns}/{name}` | | The schema with `versions`, highest first, without their text. |
 | `POST /v1/schemas/{ns}/{name}/versions` | `{major, minor, body_text}` | `201`, a draft (R08). A duplicate is `409`. |
-| `GET /v1/schema-versions/{id}` | | The version with `namespace`, `name`, `applies_to`, `body_text`, and `refs`: a map of every `lde://` URL it reaches, transitively, to that published version's text. The UI needs it to render `$ref`. A ref that isn't published is left out. |
+| `GET /v1/schema-versions/{id}` | | The version with `namespace`, `name`, `applies_to`, `body_text`, and `bundled`: the `BundleSchema` result. rjsf resolves only local `#/…` refs, so the form renders `bundled`. |
 | `PUT /v1/schema-versions/{id}` | `{body_text}` | `200`, the version (R08, R10). |
 | `POST /v1/schema-versions/{id}/publish` | none | `200`, the version (R07, R11). |
-| `POST /v1/schemas/validate` | `{schema_version_id, instance}` or `{body_text, instance}` | `200`, `{valid, errors}`. Reads only. A `body_text` that breaks R08 or R07 is `422`. |
+| `POST /v1/schemas/validate` | `{schema_version_id, instance}` or `{body_text, instance}` | `200`, `{valid, errors}`. Reads only. A `body_text` that breaks R08 or R07 is `422`. This is the form's only source of errors. |
 | `POST /v1/lineage/nodes` | gains optional `schema_version_id` | As before, plus `schema_version_id` on the node. |
 | `op: add_node` | gains optional `schema_version_id` | As before. |
 
@@ -252,8 +260,9 @@ The design first had `/v1/schemas/{ns}/{name}/versions/{ver}` for read, edit and
 **Who validates what.** Each is in the same transaction as the write:
 
 - `createNode` and `add_node` call `insertSchemaNode`: insert the row (the trigger answers R03 first), validate, then audit. With no schema it calls the existing `insertNode`, so the other call sites don't change.
-- `applyItem` validates `update_node` attrs when they are present, against the node's version, and `update_run_params` against the run's. Every direct edit and commit passes through it.
-- `createRun` validates before inserting.
+- `applyItem` validates `update_node` attrs when they are present, against the node's version, and `update_run_params` against the run's, unless the run is `planned`. Every direct edit and commit passes through it.
+- `createRun` doesn't validate: a new run is `planned`.
+- `transitionRun`, from `planned` to `running` with a schema, validates the params it read `FOR UPDATE` after `run.Apply` and before the `UPDATE`. A problem is `422` and the transaction rolls back, so the run stays planned and no event is written (R13). The run's row lock means a params edit can't slip in between.
 - `addProtocolVersion` resolves `params_schema` (R04). A value that isn't a string, doesn't parse, or names no version in the tenant is `422`.
 - A proposal isn't validated, only its commit. A failed commit is `422` and the change set stays proposed (SPEC-007-R04). The form has already checked the values through the dry run.
 
@@ -271,28 +280,30 @@ The design first had `/v1/schemas/{ns}/{name}/versions/{ver}` for read, edit and
 
 ## 3. UI
 
-**Form (`SchemaForm.tsx`).** A controlled component: `{schema, refs, value, errors, onChange, disabled}`.
+**Forms are stock rjsf.** Dependencies `@rjsf/core` and `@rjsf/utils` 6.11.1 (Apache-2.0) and `@cfworker/json-schema` 4.1.6 (MIT), pinned exactly. rjsf's default theme is used, styled through classes in `styles.css`, since the CSP has no `unsafe-inline` styles.
 
-- It resolves `$ref` (local, or through `refs`) and merges `allOf` (properties merged, `required` united), so a SPEC-010 sandbox schema that extends another still renders. It stops at depth 16.
-- `type: object` with `properties` renders a `<fieldset>`, ordered by `x-lde-order`, then by name.
-- `enum` renders a `<select>`, with a blank option unless required.
-- `string` renders an `<input>`, `format: date` or `x-lde-widget: date` an `<input type="date">`, and `x-lde-widget: textarea` a `<textarea>`.
-- `number` and `integer` render `<input type="number" step="any">`. `boolean` renders a checkbox.
-- An `array` of scalars renders rows with Add and Remove.
-- Anything else (`oneOf`, `anyOf`, an array of objects, no `type`, too deep) renders one field holding raw JSON for that property only, so no schema is unusable.
-- Each field shows `title` (or its key), `description`, `x-lde-unit` beside the input, and a required marker. Its errors appear beneath it, linked with `aria-describedby`. An error whose pointer matches no field appears at the top of the form in `role="alert"`, so none is lost.
-- Changing a field changes only that key. Keys the schema doesn't name stay in the value. Clearing an optional field removes its key.
+**One source of truth: the Go server.** The server validates every write. The errors a scientist sees in a form come only from the server: from the dry run while editing, and from a `422` on save. So the form's hint and the save's verdict can't disagree.
 
-**Validation (`useSchemaValidation.ts`).** It calls `POST /v1/schemas/validate` 300 ms after the last change, ignoring out-of-date answers, and dispatches `labrat:problems` with `{source, problems}`. The Problems panel shows the latest problems per source, and a source's empty list clears it. A `422` on save shows its `errors` the same way.
+- **`web/src/schemaValidator.ts`.** rjsf requires a validator object, which it also uses to decide what to draw: which `oneOf` or `anyOf` branch applies, and `if`/`then`. Its usual one, `@rjsf/validator-ajv8`, generates code with `new Function`, which the CSP blocks (`default-src 'self'`, no `unsafe-eval`). This file implements rjsf's documented `ValidatorType` (`validateFormData`, `isValid`, `rawValidation`, `toErrorList`) over `@cfworker/json-schema`'s `new Validator(schema, '2020-12')`, which doesn't generate code. `isValid` and `rawValidation` answer rjsf's drawing questions. `validateFormData` returns no errors, because errors come from the server.
+- **`uiSchemaFor(schema)`.** It maps the `x-lde-*` keywords onto rjsf's uiSchema. `x-lde-unit` adds ` (µL)` to the field's `ui:title`, `x-lde-widget: textarea` sets `ui:widget: 'textarea'`, and `x-lde-order` sets the parent's `ui:order`, with `'*'` last. rjsf already draws `format: date` as a date input.
+- **`toErrorSchema(problems)`.** It turns server problems (`pointer`, `message`) into rjsf's `extraErrors` shape, unescaping `~1` and `~0`. A problem at `""` goes on the form itself.
+- **`useSchemaValidation(source, target, value)`.** It calls `POST /v1/schemas/validate` 300 ms after the last change, ignores out-of-date answers, and dispatches `labrat:problems` with `{source, problems}`.
+- **`RecordForm.tsx`.** rjsf's `Form` with the adapter as `validator`, `uiSchemaFor`, `extraErrors` from the hook (or from the last save's `422`), `liveValidate` off, `noHtml5Validate` on, and no submit button of its own. A `warnOnly` prop shows the problems without blocking, for planned runs.
+
+The Problems panel shows the latest problems per source, and a source's empty list clears it.
 
 **Where forms appear.**
-- `EditField` gains an optional `schemaVersionId`. When set, it renders `SchemaForm` for editing and a labelled list for reading, and the reason and "Propose correction" flow stay as they are. The lineage panel and run view pass the record's version. Records with no schema keep the JSON box.
+- `EditField` gains an optional `schemaVersionId`. When set, it renders `RecordForm` for editing, and the same form, read-only, for reading. The reason and "Propose correction" flow stay as they are.
+  - The lineage panel passes the node's version.
+  - The run view passes the run's, with `warnOnly` while the run is planned.
+  - Records with no schema keep the JSON box.
 - New tab `newnode`, "New record": kind, optional schema (from `GET /v1/schemas?applies_to=<kind>`, showing `latest_published`), label, and the form or a JSON box. It creates the node and opens its lineage. The UI has no way to create a node today.
-- `ExperimentView` gains a "New run" form: label, optional input node ids, and the params form when the latest protocol version names a schema, otherwise a JSON box. It creates the run and opens it. The UI has no way to create a run today.
+- `ExperimentView` gains a "New run" form: label, optional input node ids, and the params form (`warnOnly`) when the latest protocol version names a schema, otherwise a JSON box. It creates the run and opens it. The UI has no way to create a run today.
+- A transition to `running` refused with `422` shows the errors in the run view and the Problems panel.
 
 **Schema browser.** New tabs `schemas` ("Schemas": a list grouped by namespace, with a new-schema form) and `schema` (id `ns/name`: versions, field docs from the schema, and a sample form that saves nothing). Tab kinds are lowercase letters only, because `fromHash` matches `[a-z]+`.
 
-**Draft editor.** Part of the `schema` tab, shown for a draft whose `author_id` is the user. JSON text, with a live form preview and messages from the dry run; Save; Publish, with a confirmation that says the version can't change afterwards. A `$ref` in unsaved text uses the `refs` from the last save, and one it can't resolve previews as a raw JSON field.
+**Draft editor.** Part of the `schema` tab, shown for a draft whose `author_id` is the user. JSON text, with a live form preview and messages from the dry run in `body_text` mode; Save; Publish, with a confirmation that says the version can't change afterwards. The preview renders the last saved `bundled` document until the text parses, and then the text itself; a `$ref` it can't resolve shows rjsf's own unsupported-field notice.
 
 Both use only the public API (D7).
 
@@ -305,6 +316,7 @@ Only the `Test: yes` requirements get tests.
 | R01 | `TestPublishedSchemaVersionsAreImmutable` | `internal/storage/integration_test.go` |
 | R03 | `TestSchemaReferencesMustBePublished` | `internal/storage/integration_test.go` |
 | R05 | `TestSchemaValidationOnWrite` | `internal/api/integration_test.go` |
+| R13 | `TestRunStartNeedsValidParams` | `internal/api/integration_test.go` |
 
 Everything else is accepted by the verifier's review and the UAT plan. R09 isn't marked `Test: yes`, so no Playwright test is added.
 
@@ -316,7 +328,12 @@ Everything else is accepted by the verifier's review and the UAT plan. R09 isn't
 | 2026-10-20 | Dependency `github.com/santhosh-tekuri/jsonschema/v6` | Full 2020-12 support, custom loaders (registry-only `$ref`), pure Go | `xeipuuv/gojsonschema` (draft-07 only) |
 | 2026-10-20 | Conformance checked in Go; the DB enforces reference validity (published + kind) | No stock PG extension validates JSON Schema; the DB still guards the "never" rules | `pg_jsonschema` (extension not available in typical managed PG) |
 | 2026-11-05 | Pin the library at v6.0.3. `golang.org/x/text`, already an indirect dependency, becomes direct | The library's error messages are localized through an `x/text` printer | Writing a message for every error kind |
-| 2026-11-05 | No form library: an in-house `SchemaForm` for a schema subset, with a raw JSON field for the rest (open question 1, proposed) | rjsf needs a validator, and Ajv compiles with `new Function`, which our CSP blocks. Precompiled validators can't take run-time schemas. rjsf plus Ajv is also a large dependency for a dozen controls, and we'd still write custom widgets. One validator means the form and the write can never disagree | `@rjsf/core` with `unsafe-eval` (weakens the CSP); rjsf with a no-op validator (breaks `oneOf` and `if`) |
+| 2026-11-06 | Stock `@rjsf/core` and `@rjsf/utils` 6.11.1 (Apache-2.0) for forms, with `@cfworker/json-schema` 4.1.6 (MIT) behind a small `ValidatorType` adapter (Rob, open question 1) | Out-of-the-box components where the licence allows. The adapter exists for one business reason: rjsf's Ajv validator needs `unsafe-eval`, and the CSP is the UI's main defence against injected script in a Part 11 system. cfworker supports 2020-12 and doesn't generate code | An in-house form renderer (unnecessary risk); Ajv with `unsafe-eval` (weakens the CSP, and a likely audit finding); rjsf with a no-op validator (breaks `oneOf` and `if`) |
+| 2026-11-06 | Form errors come only from the Go server's dry run; the browser validator never shows one | One validator of record, so no drift between hint and verdict. Rob: a browser verdict would invite schema drift | Showing cfworker's errors (two validators can disagree) |
+| 2026-11-06 | The form renders `bundled`, from `domain.BundleSchema` | rjsf resolves only local `#/…` refs | Teaching rjsf to fetch `lde://` refs |
+| 2026-11-06 | A planned run's params aren't checked; starting the run checks them (R13) | Agility while planning is a selling point (Rob). The start is where a wrong value would first matter, and SPEC-016's preflight can report problems before it | Checking on every write; checking only the values filled in |
+| 2026-11-06 | One migration, `0022` | No clients, and the database is rebuilt for every UAT, so splitting migrations by task buys nothing | `0022` and `0023` |
+| 2026-11-06 | Starter schemas and open standards go to SPEC-024. Allotrope ontology terms (AFO, CC BY 4.0) are used, not ASM schemas (CC BY-NC 4.0, non-commercial) | Keeps this spec generic, as Rob asked. ASM's licence forbids commercial use | Shipping ASM; doing the standards here |
 | 2026-11-05 | `body` is generated from `body_text` | The design had two written columns, which could disagree under one hash | Two written columns |
 | 2026-11-05 | A run's schema is read through its protocol version; `runs` gets no column | SPEC-003's pin already fixes it, so no copy can drift | `runs.params_schema_version_id`, with a copy trigger and a pin trigger |
 | 2026-11-05 | A node's schema is set at creation and never changes (R12) | Migrating between versions is out of scope, and an unrevisioned change to it would be silent | Adding the column to `record_revise` and an edit path |

@@ -55,3 +55,4 @@ Pre-flight checks (SPEC-016) need to know whether a reagent lot has expired or b
 |---|---|---|---|
 | 1 | Should using a lot in a run record quantity consumed (edge attributes or a usage record)? Recommendation: not in v1. | Rob Bassett | |
 | 2 | Is a lot usable on its expiry date (expires end of day) or not? Recommendation: usable through the end of the expiry date in the tenant time zone. | Rob Bassett | |
+| 3 | SPEC-024 will ship standards-aligned starter schemas (`lde/material-lot`, after ISA-95's material lot, and `lde/equipment`). Should this spec build on those, in place of its own `lde/reagent-lot` and `lde/instrument-status` (R01)? (Raised by the SPEC-009 review, 2026-11-06.) | Rob Bassett | |
