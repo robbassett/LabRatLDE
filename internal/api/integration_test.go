@@ -799,6 +799,93 @@ func TestSchemaValidationOnWrite(t *testing.T) {
 	})
 }
 
+// SPEC-009-R13
+func TestRunStartNeedsValidParams(t *testing.T) {
+	db := openTestDB(t)
+	tenant := newTenant(t, db)
+	srv := httptest.NewServer(api.New(config.Config{Env: "dev"}, db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil).Handler())
+	defer srv.Close()
+	h := map[string]string{"X-LDE-Tenant": tenant, "X-LDE-Actor": "it@lab"}
+
+	publishedSchema(t, srv, h, "lab", "qpcr-params", "run_params", `{"type":"object","required":["cycles"],"properties":{"cycles":{"type":"integer","minimum":1}}}`)
+	var exp struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, "", h, http.StatusCreated, "POST", "/v1/experiments", map[string]string{
+		"slug": "q", "title": "Q", "protocol_md": "---\nparams_schema: lab/qpcr-params@1.0\n---\n# qPCR\n",
+	}, &exp)
+	var run struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	sendWant(t, srv, "", h, http.StatusCreated, "POST", "/v1/runs", map[string]string{"experiment_id": exp.ID}, &run)
+	if run.State != "planned" {
+		t.Fatalf("new run is %q, want planned", run.State)
+	}
+	setParams := func(cycles int) (int, []byte) {
+		return send(t, srv, "", h, "PATCH", "/v1/runs/"+run.ID+"/params",
+			map[string]any{"params": map[string]any{"cycles": cycles}, "reason": "r"})
+	}
+	state := func() string {
+		var cur struct {
+			State string `json:"state"`
+		}
+		sendWant(t, srv, "", h, http.StatusOK, "GET", "/v1/runs/"+run.ID, nil, &cur)
+		return cur.State
+	}
+
+	if status, body := setParams(0); status != http.StatusOK {
+		t.Fatalf("PATCH invalid params while planned: %d %s, want 200", status, body)
+	}
+	status, body := send(t, srv, "", h, "POST", "/v1/runs/"+run.ID+"/transitions", map[string]string{"to": "running"})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("start with invalid params: %d %s, want 422", status, body)
+	}
+	if got := schemaErrors(t, body); strings.Join(got, ",") != "/cycles" {
+		t.Errorf("pointers %v, want [/cycles]", got)
+	}
+	if got := state(); got != "planned" {
+		t.Errorf("state %q after refused start, want planned", got)
+	}
+	if n := eventCount(t, db, tenant, "run.transitioned", run.ID); n != 0 {
+		t.Errorf("%d run.transitioned events after refused start, want 0", n)
+	}
+
+	if status, body := setParams(40); status != http.StatusOK {
+		t.Fatalf("PATCH valid params: %d %s, want 200", status, body)
+	}
+	sendWant(t, srv, "", h, http.StatusOK, "POST", "/v1/runs/"+run.ID+"/transitions", map[string]string{"to": "running"}, nil)
+
+	status, body = setParams(0)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("PATCH invalid params while running: %d %s, want 422", status, body)
+	}
+	if got := schemaErrors(t, body); strings.Join(got, ",") != "/cycles" {
+		t.Errorf("pointers %v, want [/cycles]", got)
+	}
+	var cs struct {
+		ID string `json:"id"`
+	}
+	sendWant(t, srv, "", h, http.StatusCreated, "POST", "/v1/change-sets", map[string]any{
+		"title": "t", "reason": "r",
+		"items": []map[string]any{{"op": "update_run_params", "run_id": run.ID, "params": map[string]any{"cycles": 0}}},
+	}, &cs)
+	status, body = send(t, srv, "", h, "POST", "/v1/change-sets/"+cs.ID+"/commit", map[string]string{"reason": "ok"})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("commit invalid params: %d %s, want 422", status, body)
+	}
+	if got := schemaErrors(t, body); strings.Join(got, ",") != "/cycles" {
+		t.Errorf("pointers %v, want [/cycles]", got)
+	}
+	var csCur struct {
+		State string `json:"state"`
+	}
+	sendWant(t, srv, "", h, http.StatusOK, "GET", "/v1/change-sets/"+cs.ID, nil, &csCur)
+	if csCur.State != "proposed" {
+		t.Errorf("change set %q after refused commit, want proposed", csCur.State)
+	}
+}
+
 // SPEC-007-R10, SPEC-008-R10
 func TestSealedCommitConflicts(t *testing.T) {
 	db := openTestDB(t)

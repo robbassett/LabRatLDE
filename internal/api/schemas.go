@@ -452,6 +452,34 @@ func checkAgainst(ctx context.Context, tx pgx.Tx, schemaVersionID, what string, 
 	}
 }
 
+// resolveParamsSchema reads the params_schema key of protocol frontmatter
+// ("ns/name@major.minor") and returns the version's id and sha256, or "" when
+// the key is absent. The version is found whatever its status, so the
+// database answers a draft or wrong-kind one (SPEC-009-R03, R13).
+func resolveParamsSchema(ctx context.Context, tx pgx.Tx, meta map[string]any) (id, sha string, err error) {
+	raw, ok := meta["params_schema"]
+	if !ok {
+		return "", "", nil
+	}
+	val, isString := raw.(string)
+	if !isString {
+		return "", "", &httpError{http.StatusUnprocessableEntity, fmt.Sprintf("params_schema must be a string like ns/name@1.0, got %v", raw)}
+	}
+	ns, name, major, minor, ok := domain.ParseSchemaName(val)
+	if !ok {
+		return "", "", &httpError{http.StatusUnprocessableEntity, fmt.Sprintf("params_schema %q is not ns/name@major.minor", val)}
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT v.id, encode(v.sha256, 'hex')
+		FROM schema_versions v JOIN schemas s ON s.tenant_id = v.tenant_id AND s.id = v.schema_id
+		WHERE s.namespace = $1 AND s.name = $2 AND v.major = $3 AND v.minor = $4`,
+		ns, name, major, minor).Scan(&id, &sha)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", &httpError{http.StatusUnprocessableEntity, fmt.Sprintf("params_schema %q names no schema version", val)}
+	}
+	return id, sha, err
+}
+
 // insertSchemaNode creates a lineage node pinned to a schema version, checks its
 // attrs against it and audits it, all in tx (SPEC-009-R05, R06). With no version
 // it is insertNode. The insert comes first so the database answers an

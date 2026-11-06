@@ -157,7 +157,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - `updateRecord` calls `recordSchema` and, when it finds one, adds `schema_version_id` and `schema_sha256` to the `record.revised` payload.
   - Verify: `make test-integration` passes, including all of 3.6. Commit 3.6 with this task.
   - Integrity: yes
-- [ ] 3.9 Test: a run starts only with valid params (SPEC-009-R13)
+- [x] 3.9 Test: a run starts only with valid params (SPEC-009-R13)
   - Requirements: SPEC-009-R13, SPEC-009-R05
   - Files: `internal/api/integration_test.go`
   - Do: `TestRunStartNeedsValidParams`, in dev mode, with 3.6's helpers. An experiment whose `protocol_md` frontmatter says `params_schema: lab/qpcr-params@1.0`. Then the R13 example in order:
@@ -167,7 +167,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     4. `PATCH` `{"cycles":0}` is 422 at `/cycles`. A proposed `update_run_params` with it commits with 422 and stays `proposed`.
     - Comment `// SPEC-009-R13`.
   - Verify: fails only on the new test.
-- [ ] 3.10 `params_schema` on protocol versions
+- [x] 3.10 `params_schema` on protocol versions
   - Requirements: SPEC-009-R04, SPEC-009-R06
   - Files: `internal/api/protocols.go`, `internal/api/schemas.go`
   - Do:
@@ -176,7 +176,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - `protocolVersion` gains `ParamsSchemaVersionID *string` (`params_schema_version_id,omitempty`). The list and read queries select it.
   - Verify: `curl`: a `POST /v1/experiments` whose frontmatter names a draft version, a `sample` schema, an unknown name, or `params_schema: 5` is 422. One naming a published `run_params` version is 201, and `GET /v1/protocol-versions/{id}` shows the id.
   - Integrity: yes
-- [ ] 3.11 Runs and the start gate
+- [x] 3.11 Runs and the start gate
   - Requirements: SPEC-009-R13, SPEC-009-R06
   - Files: `internal/api/runs.go`, `internal/domain/run.go`, `internal/api/schemas.go`
   - Do:

@@ -13,13 +13,14 @@ import (
 	"github.com/Accelerate-Biotech/LabRatLDE/internal/domain"
 )
 
-const runColumns = `id, tenant_id::text, experiment_id, protocol_version_id, node_id, state, params, signing_policy, started_at, finished_at, created_by, created_at`
+const runColumns = `id, tenant_id::text, experiment_id, protocol_version_id, node_id, state, params, signing_policy, started_at, finished_at, created_by, created_at,
+	(SELECT pv.params_schema_version_id FROM protocol_versions pv WHERE pv.id = protocol_version_id)`
 
 // scanRun reads a run with no signatures; the caller loads them.
 func scanRun(row pgx.Row) (domain.Run, error) {
 	run := domain.Run{Signatures: []domain.Signature{}}
 	err := row.Scan(&run.ID, &run.TenantID, &run.ExperimentID, &run.ProtocolVersionID, &run.NodeID, &run.State, &run.Params,
-		&run.SigningPolicy, &run.StartedAt, &run.FinishedAt, &run.CreatedBy, &run.CreatedAt)
+		&run.SigningPolicy, &run.StartedAt, &run.FinishedAt, &run.CreatedBy, &run.CreatedAt, &run.ParamsSchemaVersionID)
 	return run, err
 }
 
@@ -95,10 +96,19 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
+		payload := map[string]any{"experiment_id": run.ExperimentID, "node_id": nodeID, "params": run.Params, "inputs": req.Inputs,
+			"protocol_version_id": pv.ID, "protocol_version": pv.Version, "protocol_sha256": pv.SHA256}
+		schemaID, schemaSHA, err := recordSchema(ctx, tx, "run", run.ID)
+		if err != nil {
+			return err
+		}
+		if schemaID != "" {
+			payload["schema_version_id"] = schemaID
+			payload["schema_sha256"] = schemaSHA
+		}
 		_, err = audit.Append(ctx, tx, p.Tenant, audit.Entry{
 			Actor: p.Actor, Action: "run.created", EntityType: "run", EntityID: run.ID,
-			Payload: map[string]any{"experiment_id": run.ExperimentID, "node_id": nodeID, "params": run.Params, "inputs": req.Inputs,
-				"protocol_version_id": pv.ID, "protocol_version": pv.Version, "protocol_sha256": pv.SHA256},
+			Payload: payload,
 		})
 		return err
 	})
@@ -320,6 +330,16 @@ func (s *Server) transitionRun(w http.ResponseWriter, r *http.Request) {
 		from := run.State
 		if err := run.Apply(req.To, req.Reason, time.Now().UTC()); err != nil {
 			return err
+		}
+		// Starting a run is where its params must meet the protocol's schema (SPEC-009-R13).
+		if from == domain.RunPlanned && run.State == domain.RunRunning && run.ParamsSchemaVersionID != nil {
+			params := []byte(run.Params)
+			if len(params) == 0 {
+				params = []byte(`{}`)
+			}
+			if _, err := checkAgainst(ctx, tx, *run.ParamsSchemaVersionID, "params do not match", params); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE runs SET state = $2, started_at = $3, finished_at = $4 WHERE id = $1`,
 			run.ID, run.State, run.StartedAt, run.FinishedAt); err != nil {
