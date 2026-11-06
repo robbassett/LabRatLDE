@@ -211,7 +211,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - If rjsf doesn't build with this repo's TypeScript 7 and React 19.3, or the CSP blocks something, stop and report to Rob rather than working around it.
   - Verify: `npm run build`. The console check above, with its result recorded under the task. Then grep the built `web/dist/assets/*.js` for `ajv` and `new Function`, expecting 0.
   - Result (2026-11-06): rjsf renders under the unchanged CSP in Chromium (Playwright, against the Go-served build): 0 console messages, 0 page errors, 0 `securitypolicyviolation` events; labels `volume_ul (µL)*` and `matrix`, one select and one number input. Without `@rjsf/validator-ajv8` the build fails to resolve it from `@rjsf/core/lib/getTestRegistry.js`. With it, the bundle (rjsf and `schemaValidator` imported) has 0 `ajv` and 0 `new Function`. One `Function("return this")` remains, in a bundled global-object fallback that browsers never reach (`self` exists), and the CSP run showed no violation. `ValidatorType` in 6.11.1 has no `toErrorList`.
-- [ ] 4.3 Validation hook, `RecordForm` and the Problems panel
+- [x] 4.3 Validation hook, `RecordForm` and the Problems panel
   - Requirements: SPEC-009-R09
   - Files: `web/src/useSchemaValidation.ts` (new), `web/src/RecordForm.tsx` (new), `web/src/BottomPanel.tsx`, `web/src/styles.css`
   - Do:
