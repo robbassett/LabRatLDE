@@ -233,7 +233,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Edit to `-5`: the error appears under the field and in the Problems panel, and clears when corrected. Save with a reason: the revision appears.
     - A planned run with a params schema saves `{}` with a warning, and Start shows the error. On a signed run, the form saves as "Propose correction".
     - A node with no schema still shows the JSON box.
-- [ ] 4.5 New record
+- [x] 4.5 New record
   - Requirements: SPEC-009-R09
   - Files: `web/src/NewNodeView.tsx` (new), `web/src/tabs.ts`, `web/src/Workspace.tsx`, `web/src/Explorer.tsx`
   - Do: the singleton tab `newnode`, "New record", as design §3.
@@ -241,7 +241,7 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Fields: a kind `<select>`; a schema `<select>` of `listSchemas(kind)` entries with a `latest_published`, plus "No schema"; label; and `RecordForm` or a JSON box.
     - Create is disabled while problems exist. On success, open the node's lineage tab.
   - Verify: create a sample through the form, and it opens in lineage with its values. A `-5` volume shows an inline error and doesn't submit.
-- [ ] 4.6 New run
+- [x] 4.6 New run
   - Requirements: SPEC-009-R09
   - Files: `web/src/NewRunForm.tsx` (new), `web/src/ExperimentView.tsx`
   - Do: as design §3, a form in `ExperimentView` above the run list.

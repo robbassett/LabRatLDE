@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type Kind = 'experiment' | 'run' | 'instrument' | 'lineage' | 'audit' | 'inbox' | 'signoff' | 'me' | 'principals' | 'delegations';
+export type Kind = 'experiment' | 'run' | 'instrument' | 'lineage' | 'audit' | 'inbox' | 'signoff' | 'me' | 'principals' | 'delegations' | 'newnode';
 
 export type Tab = { kind: Kind; id: string; title: string };
 
-const KINDS: Kind[] = ['experiment', 'run', 'instrument', 'lineage', 'audit', 'inbox', 'signoff', 'me', 'principals', 'delegations'];
+const KINDS: Kind[] = ['experiment', 'run', 'instrument', 'lineage', 'audit', 'inbox', 'signoff', 'me', 'principals', 'delegations', 'newnode'];
 
 // Single-instance tabs: their id is their kind and their title is fixed.
 export const SINGLETONS: Partial<Record<Kind, Tab>> = {
@@ -14,6 +14,7 @@ export const SINGLETONS: Partial<Record<Kind, Tab>> = {
   me: { kind: 'me', id: 'me', title: 'My account' },
   principals: { kind: 'principals', id: 'principals', title: 'Principals' },
   delegations: { kind: 'delegations', id: 'delegations', title: 'Agent delegations' },
+  newnode: { kind: 'newnode', id: 'newnode', title: 'New record' },
 };
 
 export function tabKey(tab: Pick<Tab, 'kind' | 'id'>): string {
