@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | 21 CFR 11.10(b) (accurate and complete copies), 11.10(c); EU Annex 11 §8 (printouts), §17 (archiving) |
-| **Depends on** | `SPEC-003`, `SPEC-007`, `SPEC-008`, `SPEC-012` |
+| **Depends on** | `SPEC-003`, `SPEC-007`, `SPEC-008`, `SPEC-012`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 
@@ -22,6 +22,7 @@ LabRat promises "no exit fee": a lab must be able to take everything out in form
 - **Protocol versions** as a ZIP of Markdown + YAML files.
 - A **full tenant archive** (`labrat export`): a directory with every record type in open formats, raw file originals, and a `MANIFEST.json` listing every file's SHA-256 and size.
 - A stdlib-only Python **archive verifier** (`tools/verify_archive.py`).
+- UI: an Export menu on the experiment, run and lineage views for the per-record exports above (design §3).
 
 **Out of scope**
 - Importing an archive into LabRat.

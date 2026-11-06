@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | 21 CFR 11.10(f) (operational system checks), 11.10(e) |
-| **Depends on** | `SPEC-003`, `SPEC-009`, `SPEC-015` |
+| **Depends on** | `SPEC-003`, `SPEC-009`, `SPEC-015`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 

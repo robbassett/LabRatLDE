@@ -169,6 +169,8 @@ Registers `LDE08`: validation draft item without a current decision (SPEC-022).
 - The whole flow works without an agent's client on the QA user's machine: a colleague or service can run the agent, and QA reviews in the browser.
 - Playwright critical flow: open a draft with a missing item, see the problem and disabled commit; decide all items of a complete draft, then commit.
 
+- **SPEC-025 design system:** the Validation tab is a sidebar entry under Admin, visible to `qa`. Agent-written text carries the SPEC-014 **Agent** badge and the `--surface-2` background, so it can never pass for human text. The decided-items counter uses the To-do count style. Accept, Edit and Reject are a button group: Reject is `.btn-ghost` with a reason, not red, because rejecting a draft item is routine. Blocking problems use the Problems panel, which opens by itself. Commit says what blocks it ("Decide 4 items to commit") rather than being silently disabled.
+
 ## 4. Testing approach
 
 | Requirement | Test location |

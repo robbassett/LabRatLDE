@@ -21,7 +21,10 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- The audit viewer shows the latest checkpoint per tenant and whether verification against checkpoints passed.
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- The audit viewer's verification card (restyled in SPEC-025) adds a **Checkpoints** row: the latest checkpoint's time and sequence number, and whether verification against checkpoints passed, as an ok or danger icon with words ("Matches checkpoint #41 from 2026-11-06 02:00", or "Does not match checkpoint #41: tell QA now").
+- Admins get **Create checkpoint**, confirmed by a toast. The checkpoint list is a DataTable, and key fingerprints sit in Record details.
 
 ## 4. Decision log
 

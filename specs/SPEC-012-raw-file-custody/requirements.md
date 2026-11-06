@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | 21 CFR 11.10(b), 11.10(c), 11.10(e); EU Annex 11 §7 (data storage) |
-| **Depends on** | `SPEC-002`, `SPEC-006`, `SPEC-007` |
+| **Depends on** | `SPEC-002`, `SPEC-006`, `SPEC-007`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 

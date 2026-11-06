@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | 21 CFR 11.10(d), 11.10(e), 11.10(g), 11.100(a) |
-| **Depends on** | `SPEC-006`, `SPEC-007`, `SPEC-009`, `SPEC-011` |
+| **Depends on** | `SPEC-006`, `SPEC-007`, `SPEC-009`, `SPEC-011`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 

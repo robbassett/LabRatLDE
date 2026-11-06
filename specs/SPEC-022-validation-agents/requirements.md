@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-11-01 / 2026-11-01 |
 | **Regulatory refs** | 21 CFR 11.10(a), 11.10(e), 11.10(g); GAMP 5 (leveraging supplier evidence) |
-| **Depends on** | `SPEC-004`, `SPEC-006`, `SPEC-007`, `SPEC-012`, `SPEC-014`, `SPEC-020` |
+| **Depends on** | `SPEC-004`, `SPEC-006`, `SPEC-007`, `SPEC-012`, `SPEC-014`, `SPEC-020`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 

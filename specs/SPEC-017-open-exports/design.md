@@ -18,7 +18,18 @@ Requirements: [requirements.md](requirements.md)
 - Archive layout: `MANIFEST.json`, `audit/chain.ndjson`, `lineage/graph.jsonld`, `datasets/<id>.parquet`, `protocols/<experiment-slug>/v<N>.md`, `schemas/<ns>/<name>/<ver>.json`, `revisions.ndjson`, `change_sets.ndjson`, `signatures.ndjson`, `raw/<sha256>`.
 - JSON-LD `@context`: PROV-O plus `lde:` for LabRat terms. Attrs are emitted under `lde:attrs`, with the schema's `x-lde-ontology` as `@type` when present.
 
-## 3. Decision log
+## 3. UI
+
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- An **Export** menu (`Download` icon) offers:
+  - on the experiment view: protocol versions (ZIP) and lineage (JSON-LD);
+  - on the run view's Data card: each dataset's readings as CSV or Parquet;
+  - in the lineage explorer: the closure currently shown, as JSON-LD.
+  Each item calls the matching endpoint in §2 as a browser download, confirmed by a toast.
+- The full tenant archive stays a CLI operation (`labrat export`). The Admin section shows a help card with the command and how to check an archive with `tools/verify_archive.py`.
+
+## 4. Decision log
 
 | Date | Decision | Why | Alternatives rejected |
 |---|---|---|---|

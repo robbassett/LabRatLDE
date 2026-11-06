@@ -55,7 +55,7 @@ No migrations, no new SQLSTATEs, no new audit actions.
 
 ## 3. UI
 
-No LabRat UI change. `SignIn` already sends the user to whatever issuer `/v1/meta` names. SPEC-008's re-authentication will add `prompt=login`, which R04 makes work through the broker.
+No new LabRat screens. `SignIn` already sends the user to whatever issuer `/v1/meta` names. SPEC-008's re-authentication will add `prompt=login`, which R04 makes work through the broker. The sign-in page itself is restyled by SPEC-025 (task 5.4). Broker-side login pages are Keycloak's and are themed in the realm template only as far as naming LabRat; they're out of LabRat's UI scope.
 
 ## 4. Testing approach
 

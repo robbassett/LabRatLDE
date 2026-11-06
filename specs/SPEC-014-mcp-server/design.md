@@ -16,8 +16,12 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- Change sets with `source = agent` appear in the review inbox labelled with the agent and the human it acted for.
-- The Admin → Delegations screen (SPEC-006) shows each agent's last activity.
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- Change requests with `source = agent` carry an **Agent** badge (`Bot` icon plus "Proposed by <agent> for <human>") in To do and on the review screen. The agent's stated reason shows verbatim in a quoted block labelled as agent-written.
+- Notes and change requests an agent proposed on a run or item carry the same badge wherever they're listed.
+- **Admin → Delegations** (SPEC-006): a DataTable of agent, acting for, since, and last activity (relative time, exact time in a tooltip). **End delegation** is `.btn-danger` with a required reason.
+- LabRat has no chat UI. Agents run in their own clients (D6).
 
 ## 4. Decision log
 

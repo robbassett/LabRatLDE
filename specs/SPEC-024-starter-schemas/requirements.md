@@ -25,6 +25,7 @@ A new LabRat tenant has an empty schema registry (SPEC-009), so every lab starts
   - `lde/sample` (`sample`): fields tagged with Allotrope Foundation Ontology (AFO, CC BY 4.0) term IRIs, in an `x-lde-term` keyword.
 - Attribution for MESA and the Allotrope Foundation in a `NOTICE` file and in the schemas' descriptions.
 - Seeding is audited, like any other publish.
+- UI (SPEC-025 design system): in the schema browser, `lde` schemas carry a "Standard" badge naming the standard they follow (ISA-95, ISA-88, AFO) with its attribution. Fields tagged with an AFO term show the term's label, with the IRI in a tooltip. The New menu's "Sample or material" offers these schemas first.
 
 **Out of scope**
 - Allotrope Simple Model (ASM) schemas. They are licensed CC BY-NC 4.0, non-commercial only, so LabRat can't ship them. Importing ASM schemas a customer holds a licence for is a later spec, likely alongside the parsers (SPEC-013), since ASM describes instrument results.
