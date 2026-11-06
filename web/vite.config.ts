@@ -8,6 +8,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+    // The CSP allows only the app's own origin, so no asset may be inlined as a data: URI.
+    assetsInlineLimit: 0,
   },
   server: {
     proxy: {

@@ -1,0 +1,173 @@
+/*
+ * LabRat design tokens (SPEC-025 design §3.0, §3.1). The palette comes from
+ * the LabRat mark (docs/logo.jpg): paper, teal, slate navy, powder blue, aqua,
+ * plus one terracotta accent for "needs you".
+ *
+ * Every text colour carries its WCAG 2.x contrast ratio against --bg and
+ * --surface. Text needs 4.5:1, control boundaries and graph fills 3:1.
+ * This file is the only place a raw colour may appear (SPEC-025-R01).
+ *
+ * Status badges are the state colour mixed at 14% into --surface, with the
+ * state colour as text (light / dark):
+ *   info 5.31 / 5.65   ok 4.75 / 5.71      warn 4.68 / 6.05   danger 5.04 / 5.19
+ *   signed 6.23 / 5.67 muted 5.27 / 5.21   primary 4.65 / 5.33 accent 4.97 / 5.25
+ */
+
+:root {
+  /* Surfaces */
+  --bg: #f4f5ef; /* the mark's paper */
+  --surface: #fbfbf8;
+  --surface-2: #e9eeec;
+  --tint-blue: color-mix(in srgb, #a7c2d3 35%, var(--surface)); /* decorative: selected row, active item */
+  --tint-aqua: color-mix(in srgb, #accecd 40%, var(--surface)); /* decorative: hover, highlight */
+
+  /* Text and lines */
+  --fg: #1f2b36; /* 13.15 / 13.90 */
+  --brand-navy: #384857; /* 8.58 / 9.07 headings, wordmark */
+  --muted: #4f5e6b; /* 6.09 / 6.44 */
+  --border: #dce1de; /* decorative dividers only */
+  --border-strong: #6b7c8a; /* 3.93 / 4.15 controls (3.5 on --surface-2) */
+
+  /* Actions and signals */
+  --primary: #2f6e70; /* 5.34 / 5.65 */
+  --on-primary: #ffffff; /* 5.86 on --primary */
+  --brand-teal: #3a7b7d; /* graphic only (4.44): the mark, illustrations */
+  --brand-blue: #a7c2d3; /* graphic only */
+  --brand-aqua: #accecd; /* graphic only */
+  --mark-ink: #384857; /* the mark's navy shapes */
+  --accent: #9e4422; /* 5.80 / 6.13 "needs you" */
+  --danger: #b42318; /* 6.00 / 6.34 */
+  --ok: #2e7046; /* 5.44 / 5.75 */
+  --warn: #8a5a00; /* 5.41 / 5.72 */
+  --info: #2f5f86; /* 6.17 / 6.53 */
+  --signed: #5b3f99; /* 7.32 / 7.74 */
+
+  /* Lineage node kinds (on --surface, need 3:1; all pass) */
+  --kind-sample: #2e7046; /* 5.44 */
+  --kind-reagent: #8a5a00; /* 5.41 */
+  --kind-protocol: #5b3f99; /* 7.32 */
+  --kind-run: #2f5f86; /* 6.17 */
+  --kind-instrument: #9e4422; /* 5.80 */
+  --kind-dataset: #2f6e70; /* 5.34 */
+  --kind-analysis: #a23b72; /* 5.63 */
+
+  /* Diff rows */
+  --diff-add: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  --diff-del: color-mix(in srgb, var(--danger) 14%, var(--surface));
+
+  --backdrop: rgb(23 33 43 / 0.45);
+  --shadow-pop: 0 8px 24px rgb(23 33 43 / 0.16), 0 1px 2px rgb(23 33 43 / 0.12);
+
+  /* Type */
+  --font-display: "Outfit", "Fira Sans", system-ui, sans-serif;
+  --font-sans: "Fira Sans", system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, Consolas, monospace;
+  --text-xs: 12px; /* badges and captions, never body text */
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+
+  /* Spacing (4 px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* Shape (§3.0): square frames, full circles for living things */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-full: 9999px;
+
+  /* Motion */
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 250ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --topbar-h: 48px;
+  --panel-bar-h: 32px;
+
+  color-scheme: light;
+}
+
+/* Dark theme: the OS preference, unless the user chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17212b;
+    --surface: #1f2c38;
+    --surface-2: #283847;
+    --tint-blue: color-mix(in srgb, #a7c2d3 18%, var(--surface));
+    --tint-aqua: color-mix(in srgb, #accecd 15%, var(--surface));
+    --fg: #eceee8; /* 13.94 / 12.17 */
+    --brand-navy: #a7c2d3; /* 8.77 / 7.66 */
+    --muted: #a9b6c1; /* 7.87 / 6.88 */
+    --border: #2e3e4d;
+    --border-strong: #7a8d9e; /* 4.76 / 4.15 (3.51 on --surface-2) */
+    --primary: #7fc3c0; /* 8.12 / 7.09 */
+    --on-primary: #17212b; /* 8.12 on --primary */
+    --mark-ink: #dce6ec; /* lighter than --brand-blue so the ring and ear stay distinct */
+    --accent: #f0a27e; /* 7.89 / 6.89 */
+    --danger: #f59a8e; /* 7.68 / 6.71 */
+    --ok: #86cfa0; /* 8.88 / 7.76 */
+    --warn: #e8c066; /* 9.44 / 8.24 */
+    --info: #a7c2d3; /* 8.77 / 7.66 */
+    --signed: #c7b5f2; /* 8.78 / 7.67 */
+    --kind-sample: #86cfa0;
+    --kind-reagent: #e8c066;
+    --kind-protocol: #c7b5f2;
+    --kind-run: #a7c2d3;
+    --kind-instrument: #f0a27e;
+    --kind-dataset: #7fc3c0;
+    --kind-analysis: #f2a0c8;
+    --backdrop: rgb(0 0 0 / 0.6);
+    --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 1px 2px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
+  }
+}
+
+/* Dark theme chosen explicitly in the user menu. Keep in step with the block above. */
+:root[data-theme="dark"] {
+  --bg: #17212b;
+  --surface: #1f2c38;
+  --surface-2: #283847;
+  --tint-blue: color-mix(in srgb, #a7c2d3 18%, var(--surface));
+  --tint-aqua: color-mix(in srgb, #accecd 15%, var(--surface));
+  --fg: #eceee8;
+  --brand-navy: #a7c2d3;
+  --muted: #a9b6c1;
+  --border: #2e3e4d;
+  --border-strong: #7a8d9e;
+  --primary: #7fc3c0;
+  --on-primary: #17212b;
+  --mark-ink: #dce6ec;
+  --accent: #f0a27e;
+  --danger: #f59a8e;
+  --ok: #86cfa0;
+  --warn: #e8c066;
+  --info: #a7c2d3;
+  --signed: #c7b5f2;
+  --kind-sample: #86cfa0;
+  --kind-reagent: #e8c066;
+  --kind-protocol: #c7b5f2;
+  --kind-run: #a7c2d3;
+  --kind-instrument: #f0a27e;
+  --kind-dataset: #7fc3c0;
+  --kind-analysis: #f2a0c8;
+  --backdrop: rgb(0 0 0 / 0.6);
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 1px 2px rgb(0 0 0 / 0.4);
+  color-scheme: dark;
+}
+
+/* SPEC-025-R07: no motion for those who asked for none. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+}
