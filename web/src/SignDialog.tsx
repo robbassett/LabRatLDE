@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, createSignChallenge, getManifest, meta as loadMeta, signRun, type OIDCSettings, type RunDetail, type RunManifest } from './api';
 import { beginReauth, clearPendingSign, reauthToken, type PendingSign } from './auth';
+import ErrorMessage from './ErrorMessage';
 
 type Props = {
   run: RunDetail;
@@ -227,11 +228,7 @@ export default function SignDialog({ run, step, meaning, resume, onClose, onSign
           </p>
         )}
 
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
+        <ErrorMessage error={error} action="sign the run" />
 
         <div className="actions">
           <button type="submit" disabled={busy || !manifest || !metaLoaded}>

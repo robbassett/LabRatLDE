@@ -3,6 +3,7 @@ import type { RJSFSchema } from '@rjsf/utils';
 import { ApiError, getSchemaVersion, type SchemaProblem } from './api';
 import RecordForm from './RecordForm';
 import { useSchemaValidation } from './useSchemaValidation';
+import ErrorMessage from './ErrorMessage';
 
 type Props = {
   label: string;
@@ -30,7 +31,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
   const [proposed, setProposed] = useState(false);
   const [draft, setDraft] = useState('');
   const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [schema, setSchema] = useState<RJSFSchema | null>(null);
   const [saveProblems, setSaveProblems] = useState<SchemaProblem[] | null>(null);
@@ -108,7 +109,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
       if (proposeOnly || result === 'proposed') setProposed(true);
       else window.dispatchEvent(new CustomEvent('labrat:revised'));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
       if (err instanceof ApiError && err.problems.length > 0) setSaveProblems(err.problems);
     } finally {
       setSaving(false);
@@ -123,21 +124,17 @@ export default function EditField({ label, value, multiline, json, changed, prop
         ) : (
           <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
         )}
-        {error && schemaVersionId && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
+        {schemaVersionId ? <ErrorMessage error={error} action="load the schema" /> : null}
         {readOnly ? (
           <span className="muted"> Read-only: this record is frozen.</span>
         ) : (
-          <button type="button" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
+          <button type="button" className="btn btn-sm" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
             Edit
           </button>
         )}
         {proposed && (
           <p role="status">
-            Correction proposed. A reviewer can commit it from the <a href="#/inbox">Review inbox</a>.
+            Correction proposed. A reviewer can commit it from <a href="#/todo/review">To do</a>.
           </p>
         )}
         {changed && (
@@ -193,13 +190,9 @@ export default function EditField({ label, value, multiline, json, changed, prop
         Reason
         <input value={reason} onChange={(e) => setReason(e.target.value)} disabled={saving} required />
       </label>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      <ErrorMessage error={error} action="save the change" />
       <div className="actions">
-        <button type="submit" disabled={saving || reason.trim() === ''}>
+        <button type="submit" className="btn btn-primary" disabled={saving || reason.trim() === ''}>
           {proposeOnly ? 'Propose correction' : 'Save'}
         </button>
         <button type="button" onClick={cancel} disabled={saving}>

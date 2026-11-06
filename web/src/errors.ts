@@ -7,6 +7,8 @@ export type Explained = { title: string; detail: string; hint: string; server?: 
 // message and the server's own text follows as detail.
 export function explain(err: unknown, action: string): Explained {
   const title = `Couldn't ${action}`;
+  // A plain string is a message the UI wrote itself (e.g. "Value must be valid JSON").
+  if (typeof err === 'string') return { title, detail: err, hint: '' };
   if (!(err instanceof ApiError)) {
     if (err instanceof TypeError) {
       return { title, detail: "LabRat can't be reached.", hint: 'Check your connection and try again. Nothing was saved.' };

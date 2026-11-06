@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { listAuditEvents, verifyAudit, type AuditEvent, type AuditVerify } from './api';
+import ErrorMessage from './ErrorMessage';
+import RecordDetails from './RecordDetails';
+import { ShieldAlert, ShieldCheck } from 'lucide-react';
 
 // verifyOnOpen is a counter: each new non-zero value runs the chain verification (command palette, 3.9).
 type Props = { id: string; verifyOnOpen?: number };
 
-type Page = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; events: AuditEvent[] };
-type Verify = { status: 'idle' } | { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; result: AuditVerify };
+type Page = { status: 'loading' } | { status: 'error'; message: unknown } | { status: 'ready'; events: AuditEvent[] };
+type Verify = { status: 'idle' } | { status: 'loading' } | { status: 'error'; message: unknown } | { status: 'ready'; result: AuditVerify };
 
 const PAGE = 100;
 
@@ -26,7 +29,7 @@ export default function AuditView({ verifyOnOpen }: Props) {
     setPage({ status: 'loading' });
     listAuditEvents(after, filter?.type, filter?.id)
       .then((events) => live && setPage({ status: 'ready', events }))
-      .catch((err: unknown) => live && setPage({ status: 'error', message: message(err) }));
+      .catch((err: unknown) => live && setPage({ status: 'error', message: err }));
     return () => {
       live = false;
     };
@@ -36,7 +39,7 @@ export default function AuditView({ verifyOnOpen }: Props) {
     setVerify({ status: 'loading' });
     verifyAudit()
       .then((result) => setVerify({ status: 'ready', result }))
-      .catch((err: unknown) => setVerify({ status: 'error', message: message(err) }));
+      .catch((err: unknown) => setVerify({ status: 'error', message: err }));
   }
 
   useEffect(() => {
@@ -61,32 +64,43 @@ export default function AuditView({ verifyOnOpen }: Props) {
 
   return (
     <article className="view">
-      <h1>Audit trail</h1>
-
-      <h2>Verify</h2>
-      <p>
-        <button type="button" onClick={runVerify}>
-          Verify chain
-        </button>
-      </p>
-      <div aria-live="polite">
-        {verify.status === 'loading' && <p className="muted">Verifying…</p>}
-        {verify.status === 'ready' && (
-          <>
-            <p>
-              <strong>{verify.result.valid ? 'Chain valid' : `Chain broken at seq ${brokenAt}`}</strong>
-            </p>
-            <p>
-              Engine head: seq {verify.result.engine.head.seq} <span className="mono hash">{verify.result.engine.head.hash}</span>
-            </p>
-            <p>
-              Database head: seq {verify.result.database.head_seq} <span className="mono hash">{verify.result.database.head_hash}</span>
-            </p>
-            <p>{verify.result.agree ? 'Engine and database agree' : 'Engine and database disagree'}</p>
-          </>
-        )}
+      <div className="view-head">
+        <div>
+          <h1>Audit trail</h1>
+          <p className="subtitle">Every change, by whom, when and why, in a tamper-evident chain.</p>
+        </div>
       </div>
-      {verify.status === 'error' && <p role="alert" className="error">{verify.message}</p>}
+
+      <section className="card" aria-labelledby="verify-heading" style={{ marginBottom: 'var(--space-4)' }}>
+        <div className="card-head">
+          <h2 id="verify-heading">Verify the chain</h2>
+          <button type="button" className="btn btn-primary" onClick={runVerify} disabled={verify.status === 'loading'}>
+            Verify chain
+          </button>
+        </div>
+        <div aria-live="polite">
+          {verify.status === 'idle' && <p className="muted" style={{ margin: 0 }}>Checks that no event was altered, removed or reordered.</p>}
+          {verify.status === 'loading' && <p className="muted">Verifying…</p>}
+          {verify.status === 'ready' && (
+            <>
+              <p className={verify.result.valid && verify.result.agree ? 'badge tone-ok' : 'badge tone-danger'} style={{ fontSize: 'var(--text-sm)' }}>
+                {verify.result.valid && verify.result.agree ? <ShieldCheck size={16} aria-hidden="true" /> : <ShieldAlert size={16} aria-hidden="true" />}
+                {verify.result.valid ? `Chain intact: ${verify.result.engine.events} events` : `Chain broken at event ${brokenAt}`}
+                {!verify.result.agree && ' · engine and database disagree'}
+              </p>
+              <RecordDetails
+                summary="Chain heads"
+                rows={[
+                  { label: `Engine head (event ${verify.result.engine.head.seq})`, value: verify.result.engine.head.hash },
+                  { label: `Database head (event ${verify.result.database.head_seq})`, value: verify.result.database.head_hash },
+                ]}
+              />
+            </>
+          )}
+        </div>
+        {verify.status === 'error' && <ErrorMessage error={verify.message} action="verify the audit trail" />}
+      </section>
+      {verify.status === 'error' && <ErrorMessage error={verify.message} action="verify the audit trail" />}
 
       <h2>Events</h2>
       <form
@@ -102,7 +116,7 @@ export default function AuditView({ verifyOnOpen }: Props) {
         <label>
           Entity id <input type="text" value={entityId} onChange={(e) => setEntityId(e.target.value)} />
         </label>
-        <button type="submit" disabled={!canFilter}>
+        <button type="submit" className="btn" disabled={!canFilter}>
           Filter
         </button>
         <button type="button" onClick={clearFilter}>
@@ -111,10 +125,11 @@ export default function AuditView({ verifyOnOpen }: Props) {
       </form>
 
       {page.status === 'loading' && <p className="muted">Loading events…</p>}
-      {page.status === 'error' && <p role="alert" className="error">{page.message}</p>}
-      {page.status === 'ready' && events.length === 0 && <p className="muted">No events</p>}
+      {page.status === 'error' && <ErrorMessage error={page.message} action="load audit events" />}
+      {page.status === 'ready' && events.length === 0 && <p className="muted">No events match.</p>}
       {events.length > 0 && (
-        <table className="data">
+        <div className="table-wrap">
+        <table className="table mono-table">
           <caption className="sr-only">Audit events</caption>
           <thead>
             <tr>
@@ -130,8 +145,8 @@ export default function AuditView({ verifyOnOpen }: Props) {
           <tbody>
             {events.map((ev) => (
               <tr key={ev.seq}>
-                <th scope="row">{ev.seq}</th>
-                <td>{ev.occurred_at}</td>
+                <th scope="row" className="num">{ev.seq}</th>
+                <td className="mono">{ev.occurred_at.slice(0, 19).replace('T', ' ')}</td>
                 <td>{ev.actor}</td>
                 <td>{ev.action}</td>
                 <td>{ev.entity_type}</td>
@@ -141,6 +156,7 @@ export default function AuditView({ verifyOnOpen }: Props) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
       <p className="diff-controls">
         <button type="button" disabled={after === 0} onClick={() => setAfter(0)}>

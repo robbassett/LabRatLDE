@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { listInstruments, type Instrument } from './api';
 import { tabKey, type Tab } from './tabs';
+import ErrorMessage from './ErrorMessage';
+import RecordDetails from './RecordDetails';
 
 // instruments is the explorer's already-loaded list; the view only pages the API when the id is not in it.
 type Props = {
@@ -10,7 +12,7 @@ type Props = {
   rename: (key: string, title: string) => void;
 };
 
-type Fetched = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; instrument: Instrument };
+type Fetched = { status: 'loading' } | { status: 'error'; message: unknown } | { status: 'ready'; instrument: Instrument };
 
 function show(v: unknown): string {
   return typeof v === 'string' ? v : JSON.stringify(v);
@@ -36,7 +38,7 @@ export default function InstrumentView({ id, instruments, open, rename }: Props)
       } while (cursor && live);
       setFetched({ status: 'error', message: 'Instrument not found' });
     })().catch((err: unknown) => {
-      if (live) setFetched({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      if (live) setFetched({ status: 'error', message: err });
     });
     return () => {
       live = false;
@@ -51,7 +53,7 @@ export default function InstrumentView({ id, instruments, open, rename }: Props)
   }, [id, name, rename]);
 
   if (!instrument) {
-    if (fetched.status === 'error') return <p role="alert" className="error">{fetched.message}</p>;
+    if (fetched.status === 'error') return <ErrorMessage error={fetched.message} action="load the instrument" />;
     return <p className="muted">Loading instrument…</p>;
   }
 
@@ -59,19 +61,22 @@ export default function InstrumentView({ id, instruments, open, rename }: Props)
 
   return (
     <article className="view">
-      <h1>{instrument.name}</h1>
-      <p>
-        Kind: <strong>{instrument.kind}</strong>
-      </p>
-      <p>
-        <button type="button" onClick={() => open({ kind: 'lineage', id: instrument.node_id, title: instrument.name })}>
+      <div className="view-head">
+        <div>
+          <h1>{instrument.name}</h1>
+          <p className="subtitle">
+            Instrument · <span className="mono">{instrument.kind}</span>
+          </p>
+        </div>
+        <button type="button" className="btn" onClick={() => open({ kind: 'lineage', id: instrument.node_id, title: instrument.name })}>
           Open lineage
         </button>
-      </p>
+      </div>
+      <p className="muted">To send readings, open a running run and choose Send data.</p>
 
-      <h2>Attributes</h2>
+      <h2>Details</h2>
       {attrs.length === 0 ? (
-        <p className="muted">No attributes</p>
+        <p className="muted">No details recorded.</p>
       ) : (
         <table className="data">
           <caption className="sr-only">Instrument attributes</caption>
@@ -91,6 +96,12 @@ export default function InstrumentView({ id, instruments, open, rename }: Props)
           </tbody>
         </table>
       )}
+      <RecordDetails
+        rows={[
+          { label: 'Instrument ID', value: instrument.id },
+          { label: 'Item ID (lineage)', value: instrument.node_id, term: 'lineage node id' },
+        ]}
+      />
     </article>
   );
 }
