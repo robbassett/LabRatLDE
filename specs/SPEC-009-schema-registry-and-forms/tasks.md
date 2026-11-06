@@ -198,18 +198,19 @@ Fixtures in the tests are the two schemas in requirements §4: `sampleSchema` is
     - Functions `listSchemas`, `getSchema`, `createSchema`, `createSchemaVersion`, `getSchemaVersion`, `updateSchemaVersion`, `publishSchemaVersion`, `validateAgainstSchema`, `createNode` and `createRun`. The last two don't exist in the client yet.
     - `ApiError` gains `problems: SchemaProblem[]`, read from the body's `errors` in `request`, empty when absent.
   - Verify: `npm run build`.
-- [ ] 4.2 rjsf and its validator, as a spike
+- [x] 4.2 rjsf and its validator, as a spike
   - Requirements: SPEC-009-R09
   - Files: `web/package.json`, `web/package-lock.json`, `web/src/schemaValidator.ts` (new)
   - Do:
-    - `npm install --save-exact @rjsf/core@6.11.1 @rjsf/utils@6.11.1 @cfworker/json-schema@4.1.6`.
+    - `npm install --save-exact @rjsf/core@6.11.1 @rjsf/utils@6.11.1 @cfworker/json-schema@4.1.6 @rjsf/validator-ajv8@6.11.1`. The last is needed only because core's ESM entry imports it (design decision log, 2026-11-06); it is never used.
     - In `schemaValidator.ts`, as design §3:
       - `schemaValidator`, implementing rjsf's `ValidatorType` over `new Validator(schema, '2020-12')`, with `validateFormData` returning no errors;
       - `uiSchemaFor(schema)`;
       - `toErrorSchema(problems)`.
     - Prove it before building on it. Temporarily render rjsf's `Form` with `sampleSchema` in any view, run the dev server, and confirm in the browser console that there are no CSP violations and that the `matrix` select and `volume_ul` number render with "(µL)". Then remove the temporary render.
     - If rjsf doesn't build with this repo's TypeScript 7 and React 19.3, or the CSP blocks something, stop and report to Rob rather than working around it.
-  - Verify: `npm run build`. The console check above, with its result recorded under the task.
+  - Verify: `npm run build`. The console check above, with its result recorded under the task. Then grep the built `web/dist/assets/*.js` for `ajv` and `new Function`, expecting 0.
+  - Result (2026-11-06): rjsf renders under the unchanged CSP in Chromium (Playwright, against the Go-served build): 0 console messages, 0 page errors, 0 `securitypolicyviolation` events; labels `volume_ul (µL)*` and `matrix`, one select and one number input. Without `@rjsf/validator-ajv8` the build fails to resolve it from `@rjsf/core/lib/getTestRegistry.js`. With it, the bundle (rjsf and `schemaValidator` imported) has 0 `ajv` and 0 `new Function`. One `Function("return this")` remains, in a bundled global-object fallback that browsers never reach (`self` exists), and the CSP run showed no violation. `ValidatorType` in 6.11.1 has no `toErrorList`.
 - [ ] 4.3 Validation hook, `RecordForm` and the Problems panel
   - Requirements: SPEC-009-R09
   - Files: `web/src/useSchemaValidation.ts` (new), `web/src/RecordForm.tsx` (new), `web/src/BottomPanel.tsx`, `web/src/styles.css`

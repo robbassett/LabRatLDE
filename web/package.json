@@ -9,6 +9,10 @@
     "e2e": "playwright test --pass-with-no-tests"
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.6",
+    "@rjsf/core": "6.11.1",
+    "@rjsf/utils": "6.11.1",
+    "@rjsf/validator-ajv8": "6.11.1",
     "cytoscape": "3.34.4",
     "cytoscape-dagre": "4.0.1",
     "markdown-it": "15.0.3",
