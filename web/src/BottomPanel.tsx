@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import {
   blame,
@@ -52,7 +53,7 @@ function History({ tab }: { tab: Tab | null }) {
     // Refetch when the active tab changes, not when its title does.
   }, [key]);
 
-  if (!tab || !ENTITY_TYPE[tab.kind]) return <p className="muted">Select an entity to see its history</p>;
+  if (!tab || !ENTITY_TYPE[tab.kind]) return <p className="muted">Open an experiment, run or instrument to see its history.</p>;
   if (error) return <p role="alert">{error}</p>;
   if (loading) return <p className="muted">Loading…</p>;
   if (events.length === 0) return <p className="muted">No events</p>;
@@ -149,7 +150,7 @@ function Revisions({ tab }: { tab: Tab | null }) {
     // Recompute the diff when the selection changes or a revision is saved.
   }, [from, to, reload]);
 
-  if (!tab || !type) return <p className="muted">Select a record to see its revisions</p>;
+  if (!tab || !type) return <p className="muted">Open an experiment, run or item to see its revisions.</p>;
   if (error) return <p role="alert">{error}</p>;
   if (loading) return <p className="muted">Loading…</p>;
   if (revs.length === 0) return <p className="muted">No revisions</p>;
@@ -231,9 +232,31 @@ function Revisions({ tab }: { tab: Tab | null }) {
   );
 }
 
+const PANEL_KEY = 'labrat.panel';
+
+function storedOpen(): boolean {
+  try {
+    return localStorage.getItem(PANEL_KEY) === 'open';
+  } catch {
+    return false;
+  }
+}
+
+// BottomPanel (SPEC-025-R10) is collapsed to a bar by default. Its open state
+// is remembered, and any schema problem opens it.
 export default function BottomPanel({ active }: { active: Tab | null }) {
   const [panel, setPanel] = useState<(typeof PANELS)[number]>('Problems');
   const [bySource, setBySource] = useState<Record<string, SchemaProblem[]>>({});
+  const [open, setOpenState] = useState(storedOpen);
+
+  function setOpen(next: boolean) {
+    setOpenState(next);
+    try {
+      localStorage.setItem(PANEL_KEY, next ? 'open' : 'closed');
+    } catch {
+      // Storage unavailable: the state lasts until reload.
+    }
+  }
 
   // Forms publish their latest problems; an empty list clears the source.
   useEffect(() => {
@@ -245,6 +268,10 @@ export default function BottomPanel({ active }: { active: Tab | null }) {
         else next[source] = problems;
         return next;
       });
+      if (problems.length > 0) {
+        setPanel('Problems');
+        setOpenState(true);
+      }
     };
     window.addEventListener('labrat:problems', onProblems);
     return () => window.removeEventListener('labrat:problems', onProblems);
@@ -254,10 +281,18 @@ export default function BottomPanel({ active }: { active: Tab | null }) {
 
   // The "changed" marker on an edit field asks for the Revisions panel.
   useEffect(() => {
-    const show = () => setPanel('Revisions');
+    const show = () => {
+      setPanel('Revisions');
+      setOpenState(true);
+    };
     window.addEventListener('labrat:show-revisions', show);
     return () => window.removeEventListener('labrat:show-revisions', show);
   }, []);
+
+  function choose(p: (typeof PANELS)[number]) {
+    setPanel(p);
+    if (!open) setOpen(true);
+  }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     const i = PANELS.indexOf(panel);
@@ -271,49 +306,63 @@ export default function BottomPanel({ active }: { active: Tab | null }) {
   }
 
   return (
-    <section className="bottom" aria-label="Panel">
-      <div role="tablist" aria-label="Panel">
-        {PANELS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            role="tab"
-            id={`panel-tab-${p}`}
-            aria-selected={p === panel}
-            aria-controls="panel-body"
-            tabIndex={p === panel ? 0 : -1}
-            onClick={() => setPanel(p)}
-            onKeyDown={onKeyDown}
-          >
-            {p === 'Problems' && rows.length > 0 ? `Problems (${rows.length})` : p}
-          </button>
-        ))}
+    <section className="bottom" aria-label="Panel" data-open={open}>
+      <div className="panel-bar">
+        <div role="tablist" aria-label="Panel">
+          {PANELS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="tab"
+              id={`panel-tab-${p}`}
+              aria-selected={open && p === panel}
+              aria-controls={open ? 'panel-body' : undefined}
+              tabIndex={p === panel ? 0 : -1}
+              onClick={() => choose(p)}
+              onKeyDown={onKeyDown}
+            >
+              {p === 'Problems' ? `Problems (${rows.length})` : p}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon btn-sm"
+          aria-expanded={open}
+          aria-label={open ? 'Collapse panel' : 'Expand panel'}
+          title={open ? 'Collapse panel' : 'Expand panel'}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronUp size={16} aria-hidden="true" />}
+        </button>
       </div>
-      <div role="tabpanel" id="panel-body" aria-labelledby={`panel-tab-${panel}`} className="panel-body" tabIndex={0}>
-        {panel === 'Problems' && rows.length === 0 && <p className="muted">No problems</p>}
-        {panel === 'Problems' && rows.length > 0 && (
-          <table className="history changes" aria-label="Problems">
-            <thead>
-              <tr>
-                <th scope="col">Source</th>
-                <th scope="col">Pointer</th>
-                <th scope="col">Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.source}</td>
-                  <td>{r.pointer}</td>
-                  <td>{r.message}</td>
+      {open && (
+        <div role="tabpanel" id="panel-body" aria-labelledby={`panel-tab-${panel}`} className="panel-body" tabIndex={0}>
+          {panel === 'Problems' && rows.length === 0 && <p className="muted">No problems. Schema checks on forms you fill in show up here.</p>}
+          {panel === 'Problems' && rows.length > 0 && (
+            <table className="history changes" aria-label="Problems">
+              <thead>
+                <tr>
+                  <th scope="col">Source</th>
+                  <th scope="col">Field</th>
+                  <th scope="col">Problem</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {panel === 'History' && <History tab={active} />}
-        {panel === 'Revisions' && <Revisions key={active ? tabKey(active) : ''} tab={active} />}
-      </div>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.source}</td>
+                    <td className="mono">{r.pointer}</td>
+                    <td>{r.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {panel === 'History' && <History tab={active} />}
+          {panel === 'Revisions' && <Revisions key={active ? tabKey(active) : ''} tab={active} />}
+        </div>
+      )}
     </section>
   );
 }

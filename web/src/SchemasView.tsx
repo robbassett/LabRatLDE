@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createSchema, listSchemas, type AppliesTo, type SchemaSummary } from './api';
 import type { Tab } from './tabs';
+import EmptyState from './EmptyState';
+import ErrorMessage from './ErrorMessage';
+import { SearchArt } from './illustrations';
 
 const APPLIES_TO: AppliesTo[] = ['sample', 'reagent', 'protocol', 'run', 'instrument', 'dataset', 'analysis', 'run_params'];
 
@@ -17,12 +20,12 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
   const [items, setItems] = useState<SchemaSummary[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [namespace, setNamespace] = useState('');
   const [name, setName] = useState('');
   const [appliesTo, setAppliesTo] = useState<AppliesTo>('sample');
   const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<unknown>(null);
 
   function load(cursor?: string) {
     setLoading(true);
@@ -32,7 +35,7 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
         setItems((prev) => (cursor ? [...prev, ...p.items] : p.items));
         setNext(p.next_cursor);
       })
-      .catch((err: unknown) => setError(errorMessage(err)))
+      .catch((err: unknown) => setError(err))
       .finally(() => setLoading(false));
   }
 
@@ -46,7 +49,7 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
       const s = await createSchema({ namespace: namespace.trim(), name: name.trim(), applies_to: appliesTo });
       open(schemaTab(s.namespace, s.name));
     } catch (err: unknown) {
-      setCreateError(errorMessage(err));
+      setCreateError(err);
     } finally {
       setCreating(false);
     }
@@ -57,10 +60,16 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
 
   return (
     <article className="view">
-      <h1>Schemas</h1>
+      <div className="view-head">
+        <div>
+          <h1>Schemas</h1>
+          <p className="subtitle">Schemas give records a form and check their details. Published versions are used by new records and runs.</p>
+        </div>
+      </div>
 
-      <h2>New schema</h2>
-      <form className="edit-form" onSubmit={create}>
+      <details className="card" style={{ marginBottom: 'var(--space-4)' }} open={!loading && items.length === 0}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>New schema</summary>
+      <form className="edit-form" onSubmit={create} style={{ marginTop: 'var(--space-3)' }}>
         <label>
           Namespace
           <input value={namespace} onChange={(e) => setNamespace(e.target.value)} disabled={creating} required />
@@ -79,22 +88,19 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
             ))}
           </select>
         </label>
-        {createError && (
-          <p role="alert" className="error">
-            {createError}
-          </p>
-        )}
+        <ErrorMessage error={createError} action="create the schema" />
         <div className="actions">
-          <button type="submit" disabled={creating}>
+          <button type="submit" className="btn btn-primary" disabled={creating}>
             Create schema
           </button>
         </div>
       </form>
+      </details>
 
       {namespaces.map((ns) => (
         <section key={ns} aria-label={ns}>
           <h2>{ns}</h2>
-          <table className="data">
+          <table className="table">
             <caption className="sr-only">Schemas in {ns}</caption>
             <thead>
               <tr>
@@ -109,7 +115,7 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
                 .map((s) => (
                   <tr key={s.id}>
                     <td>
-                      <button type="button" onClick={() => open(schemaTab(s.namespace, s.name))}>
+                      <button type="button" className="row-link" onClick={() => open(schemaTab(s.namespace, s.name))}>
                         {s.name}
                       </button>
                     </td>
@@ -122,12 +128,10 @@ export default function SchemasView({ open }: { open: (t: Tab) => void }) {
         </section>
       ))}
       {loading && <p className="muted">Loading…</p>}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
+      <ErrorMessage error={error} action="load schemas" />
+      {!loading && !error && items.length === 0 && (
+        <EmptyState icon={<SearchArt />} text="No schemas yet. Without one, records take free-form JSON details. Create a schema above to give them a form." />
       )}
-      {!loading && !error && items.length === 0 && <p className="muted">No schemas yet.</p>}
       {next && !loading && (
         <div className="actions">
           <button type="button" onClick={() => load(next)}>

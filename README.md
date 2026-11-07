@@ -330,6 +330,7 @@ Configuration is environment-only; see [`.env.example`](.env.example).
 | `POST` | `/v1/experiments` | Create an experiment from a Markdown+YAML protocol |
 | `GET`  | `/v1/experiments/{id}` | Fetch experiment and parsed protocol metadata |
 | `POST` | `/v1/runs` | Start a run; link its inputs with `prov:used` |
+| `GET`  | `/v1/runs` | List runs across experiments, newest first; `?state=running,paused` filters by state (Home view) |
 | `GET`  | `/v1/runs/{id}` | Fetch run state |
 | `POST` | `/v1/runs/{id}/transitions` | Advance the state machine; `to: signed` is `400` (sign instead) |
 | `GET`  | `/v1/runs/{id}/manifest` | The canonical manifest to sign, its SHA-256, and what changed since the last valid signature |

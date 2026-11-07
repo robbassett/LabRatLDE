@@ -86,5 +86,5 @@ test('signatures panel shows who signed what and when, and marks them invalidate
 
   await page.reload();
   await expect(panel.locator('s')).toHaveCount(2);
-  await expect(panel.getByText(/Invalidated by change set .*: transcription error/)).toHaveCount(2);
+  await expect(panel.getByText(/Invalidated by change request .*: transcription error/)).toHaveCount(2);
 });

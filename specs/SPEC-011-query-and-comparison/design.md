@@ -19,9 +19,20 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- Search lives in the explorer's search tab. Choosing a schema adds typed filter fields; results open as tabs or can be multi-selected for "Compare".
-- Dataset chart: one line per channel, a min/max band when bucketed, a unit on each axis, and drag to zoom.
-- Comparison view: overlaid series with a legend per dataset (run label, instrument), and the attribute table below.
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- **Quick search** is the SPEC-025 top-bar search field: typing searches item labels across kinds, with results grouped as Experiments, Runs, Samples and materials, Datasets. **Advanced search** opens a Search tab.
+- **Advanced search:** pick a kind, then a schema. The schema's fields become typed `Field`s built from their JSON Schema types: number range, date range, enum select, text contains. Active filters show as removable chips, and the result count updates as filters change (debounced 300 ms). Results go in a DataTable with `StatusBadge` where relevant, plus row checkboxes. A sticky action bar, **Compare (n)**, appears once two or more datasets are selected.
+- **Input picker:** this spec's node search replaces SPEC-025's paste-an-ID input on the run view with a `ComboBox` that searches samples and materials by label. ID entry stays as a fallback for barcode scanners.
+- **Dataset chart** follows the `dataviz` skill and SPEC-025 tokens:
+  - one line per channel from a categorical palette validated in both themes;
+  - a legend showing channel and unit, units on both axes, and a min/max band when bucketed;
+  - drag to zoom, with a visible **Reset zoom** button and keyboard zoom (`+` and `-`);
+  - a hover tooltip with time, value and unit in Fira Code.
+  A **Table** toggle shows the same data as a table, for screen readers and exact values.
+- **Comparison view:** overlaid series, a legend per dataset (run label, instrument) that toggles a series on click, and the attribute table below. Values that differ get the `--accent` tint plus a "differs" icon.
+- Empty states: no results → "No matches. Try removing the last filter." with that chip focused; no readings → "No readings yet. Send data from the run view."
+- **Copy table** is a `.btn-ghost`, confirmed by a toast.
 
 ## 4. Decision log
 

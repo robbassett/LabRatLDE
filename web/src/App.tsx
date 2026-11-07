@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { clearSession, getMe, meta as loadMeta, setAccessToken, setUnauthorizedHandler, storedActor, type Meta } from './api';
 import { clearPendingSign, completeSignIn, endSessionUrl, setLatestIdToken, watchIdle } from './auth';
+import { forgetMe } from './me';
 import SignIn from './SignIn';
 import Workspace from './Workspace';
 
@@ -19,6 +20,7 @@ export default function App() {
     setAccessToken(null);
     setLatestIdToken(undefined);
     clearSession();
+    forgetMe();
     setSession(null);
     setMessage(why);
   }, []);
@@ -72,8 +74,13 @@ export default function App() {
     );
   }, [session, idleSeconds, signOut]);
 
-  if (error) return <p role="alert">Could not reach the server: {error}</p>;
-  if (!meta) return <p>Loading…</p>;
+  if (error)
+    return (
+      <p role="alert" className="boot">
+        LabRat can't be reached: {error}. Check your connection and reload.
+      </p>
+    );
+  if (!meta) return <p className="boot">Loading…</p>;
   if (!session) return <SignIn meta={meta} message={message} onDevSignIn={(handle) => setSession({ handle })} />;
 
   // In prod, also end the IdP session, so a shared bench computer doesn't
@@ -90,19 +97,5 @@ export default function App() {
     }
   }
 
-  return (
-    <>
-      <header className="topbar">
-        <h1>LabRat</h1>
-        <a href="#/me/me" title="My account">
-          {session.handle}
-        </a>
-        <kbd className="muted">Ctrl+K</kbd>
-        <button type="button" onClick={userSignOut}>
-          Sign out
-        </button>
-      </header>
-      <Workspace onSignOut={userSignOut} />
-    </>
-  );
+  return <Workspace handle={session.handle} onSignOut={userSignOut} />;
 }

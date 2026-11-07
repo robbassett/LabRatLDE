@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 
 	v1.HandleFunc("POST /v1/runs", s.createRun)
 	v1.HandleFunc("GET /v1/experiments/{id}/runs", s.listExperimentRuns)
+	v1.HandleFunc("GET /v1/runs", s.listRuns)
 	v1.HandleFunc("GET /v1/runs/{id}", s.getRun)
 	v1.HandleFunc("POST /v1/runs/{id}/transitions", s.transitionRun)
 	v1.HandleFunc("PATCH /v1/runs/{id}/params", s.patchRunParams)

@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | 21 CFR 11.10(k), 11.50, 11.70; EU Annex 11 §10 (change management) |
-| **Depends on** | `SPEC-006`, `SPEC-007`, `SPEC-008`, `SPEC-009` |
+| **Depends on** | `SPEC-006`, `SPEC-007`, `SPEC-008`, `SPEC-009`, `SPEC-025` (UI) |
 | **Supersedes** | `SPEC-009`'s rule that any scientist may publish |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)

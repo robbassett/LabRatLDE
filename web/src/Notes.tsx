@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import { useEffect, useState, type FormEvent } from 'react';
 import { addNote, editNote, listNotes, proposeChangeSet, type Note } from './api';
+import ErrorMessage from './ErrorMessage';
 
 // HTML is disabled, so rendered output cannot contain author-supplied markup.
 const md = new MarkdownIt({ html: false, linkify: false });
@@ -19,16 +20,16 @@ function errorMessage(err: unknown): string {
 export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const [draft, setDraft] = useState('');
   const [preview, setPreview] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<unknown>(null);
 
   const [editId, setEditId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
   const [editReason, setEditReason] = useState('');
-  const [editError, setEditError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<unknown>(null);
 
   const [saving, setSaving] = useState(false);
   // The note whose correction was just proposed.
@@ -46,7 +47,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
         setLoaded(true);
       })
       .catch((err: unknown) => {
-        if (live) setLoadError(errorMessage(err));
+        if (live) setLoadError(err);
       });
     return () => {
       live = false;
@@ -70,7 +71,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
       setPreview(false);
       await reload();
     } catch (err: unknown) {
-      setAddError(errorMessage(err));
+      setAddError(err);
     } finally {
       setSaving(false);
     }
@@ -104,7 +105,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
       setEditId(null);
       await reload();
     } catch (err: unknown) {
-      setEditError(errorMessage(err));
+      setEditError(err);
     } finally {
       setSaving(false);
     }
@@ -112,11 +113,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
 
   return (
     <div className="notes">
-      {loadError && (
-        <p role="alert" className="error">
-          {loadError}
-        </p>
-      )}
+      <ErrorMessage error={loadError} action="load notes" />
       {!loaded && !loadError && <p className="muted">Loading notes…</p>}
       {loaded && notes.length === 0 && <p className="muted">No notes yet.</p>}
 
@@ -150,11 +147,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
                       required
                     />
                   </label>
-                  {editError && (
-                    <p role="alert" className="error">
-                      {editError}
-                    </p>
-                  )}
+                  <ErrorMessage error={editError} action="save the note" />
                   <div className="actions">
                     <button type="submit" disabled={saving || editReason.trim() === '' || editBody.trim() === ''}>
                       {propose ? 'Propose correction' : 'Save'}
@@ -182,7 +175,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
                 )}
                 {proposedId === n.id && (
                   <p role="status">
-                    Correction proposed. A reviewer can commit it from the <a href="#/inbox">Review inbox</a>.
+                    Correction proposed. A reviewer can commit it from <a href="#/todo/review">To do</a>.
                   </p>
                 )}
               </li>
@@ -207,11 +200,7 @@ export default function Notes({ nodeId, proposeOnly, readOnly }: Props) {
             <textarea rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} disabled={saving} />
           </label>
         )}
-        {addError && (
-          <p role="alert" className="error">
-            {addError}
-          </p>
-        )}
+        <ErrorMessage error={addError} action="add the note" />
         <div className="actions">
           <button type="button" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>
             Preview

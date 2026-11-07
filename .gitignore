@@ -19,3 +19,4 @@ coverage.*
 # Local Claude Code setup (agents, settings, worktrees) and project instructions
 .claude/
 CLAUDE.md
+.agents/

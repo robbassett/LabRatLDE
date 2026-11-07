@@ -33,6 +33,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | SPEC-022 | [Validation agents](SPEC-022-validation-agents/requirements.md) | Draft |
 | SPEC-023 | [Review hardening](implemented/SPEC-023-review-hardening/requirements.md) | Implemented |
 | SPEC-024 | [Standards-aligned starter schemas](SPEC-024-starter-schemas/requirements.md) | Draft (brief) |
+| SPEC-025 | [UI/UX refresh: design system and the scientist's workflow](SPEC-025-ux-refresh/requirements.md) | Built, awaiting verifier and UAT (before SPEC-010) |
 
 **SQLSTATE registry** (custom codes raised by triggers): `LDE01` lineage cycle (SPEC-001), `LDE02` forged or non-extending audit event (SPEC-001), `LDE03` immutable/append-only record (SPEC-001, reused), `LDE04` sealed record (SPEC-002), `LDE05` role denied (SPEC-006), `LDE06` invalid schema reference (SPEC-009), `LDE07` signature rule violation (SPEC-008), `LDE08` validation draft item without a current decision (SPEC-022).
 
@@ -48,7 +49,7 @@ This is the plan for getting from the scaffold to a regulated pilot and beyond. 
 | Instrument ingest | Partial | NDJSON numeric readings only; no raw vendor files or parsers |
 | Protocols as code | Built | Append-only, gapless versions with a DB-computed SHA-256; each run pins its version immutably (SPEC-003) |
 | Identity | Dev headers only | `LDE_ENV=prod` refuses to serve |
-| Web UI | Not started | Core to the product (decision D7) |
+| Web UI | Partial | Shell, read views, revisions, signatures and schema forms (SPEC-005 to 009). Few write flows and no shared design system yet: SPEC-025 adds both (decisions D7, D15) |
 | Schemas | Built | JSON Schema versions, immutable once published; attrs and params validated on write; schema-driven forms ([SPEC-009](implemented/SPEC-009-schema-registry-and-forms/requirements.md)) |
 | Governance tiers | Not started | Any human scientist may publish; no namespace levels or Steward yet (SPEC-010) |
 | Revisions / Git-like workflow | Not started | |
@@ -83,6 +84,7 @@ These are correctness issues in what exists, not missing features. SPEC-002 and 
 | D12 | **The OQ is the `Test: yes` suite** (API + DB), plus Playwright for critical UI flows once the UI exists. `make validate` produces the traceability matrix and a stamped report. | The testing policy already is validation as code. |
 | D13 | The CLI is optional automation tooling, not the primary interface. | Follows from D7. |
 | D14 | **Validation stays with the regulated company.** LabRat supplies evidence, agents only draft, and customer QA decides. Anything computable (worklists, evidence gaps, citation checks) is deterministic, and agents make no GMP decisions. | The customer owns validation for its intended use, and a missed item must not look like a clean result. |
+| D15 | **One design system, defined in SPEC-025, governs every screen.** Feature specs reuse its tokens, components, glossary and error-message table, and each spec's UI section names its next action, empty states and plain-language labels. A scientist must be able to go from an empty tenant to a signed run in the UI alone. | The UI had grown screen by screen without a shared visual language, and it didn't show how to do science in it (2026-11-06 review). |
 
 ## 3. Schema governance model
 
@@ -141,6 +143,7 @@ Notes are first-class, revisioned Markdown attached to runs and nodes. Policy de
 | ID | Title | Scope | Test | Regulatory | Deps |
 |---|---|---|---|---|---|
 | SPEC-009 | Schema registry and schema-driven forms | JSON Schema 2020-12 versions, immutable once published; `schema_version_id` on nodes and runs; validation of attrs and params on write. UI: forms rendered and validated from the schema, schema browser | Published versions immutable; non-conforming writes rejected | 11.10(h) | 005 |
+| SPEC-025 | UI/UX refresh | Design system seeded by the LabRat mark (`docs/logo.jpg`): its teal, slate-navy, powder-blue and aqua palette, flat circle-and-square shape language, light and dark themes, Lucide icons, self-hosted Outfit and Fira fonts, React Aria primitives, shared components; top bar, sectioned sidebar, Home with a Get-started guide, merged To-do view; the scientist's workflow in the UI over existing endpoints (new experiment, protocol editor, run lifecycle stepper and transitions, inputs, send data, register instrument); plain-language labels, Record details, actionable errors; every screen restyled; `GET /v1/runs`. WCAG 2.2 AA | None (presentation only; UAT walks empty tenant → signed run) | none | 005, 008, 009 |
 | SPEC-010 | Schema governance namespaces | §3 above: namespaces, levels, Steward, per-level compatibility linter, change requests as change sets, Controlled changes needing Steward + QA signatures and impact analysis, CURIE fields, optional GitOps. UI: change-request review with diff and impact list | Each level's rule; Controlled needs both signatures; a sandbox never alters its parent | 11.10(k) change control | 007, 008, 009 |
 | SPEC-024 | Standards-aligned starter schemas | `lde` schemas seeded into each tenant: material lot and equipment after ISA-95 (B2MML), with ISA-88 equipment levels; sample tagged with Allotrope ontology terms; attribution in `NOTICE`. No ASM schemas (non-commercial licence) | None beyond SPEC-009-R01 | none | 009 |
 | SPEC-011 | Query and comparison | Filter nodes by kind, schema and JSONB path; page readings by dataset; compare datasets across experiments. UI: search and a comparison view with charts | None (reads, RLS-scoped) | none | 009 |
@@ -176,7 +179,9 @@ Notes are first-class, revisioned Markdown attached to runs and nodes. Policy de
 003 Protocols ┼─► 006 Identity ─► 007 Revisions ─► 008 Signatures ─► regulated pilot
 005 UI shell ─┘        └─► 021 Broker & IdP recipes ──────────┘ (pilot sites on SAML-only or fiddly IdPs)
                                                          │
-004 Traceability harness grows alongside every spec       └─► 009 Schemas ─► 010 Governance
+004 Traceability harness grows alongside every spec       └─► 009 Schemas ─► 025 UI/UX refresh ─► 010 Governance
 ```
+
+SPEC-025 goes before every remaining feature spec. Each of them builds its screens on its design system and patterns.
 
 Ingestion (012–013) and agents (014–016) follow once a trustworthy signature and change-set flow exist. Agents and parsers both depend on change sets.

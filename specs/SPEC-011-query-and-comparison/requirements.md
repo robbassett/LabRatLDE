@@ -6,7 +6,7 @@
 | **Owner** | Rob Bassett |
 | **Created / Updated** | 2026-10-20 / 2026-10-20 |
 | **Regulatory refs** | none |
-| **Depends on** | `SPEC-005`, `SPEC-009` |
+| **Depends on** | `SPEC-005`, `SPEC-009`, `SPEC-025` (UI) |
 
 Design: [design.md](design.md) · Tasks: [tasks.md](tasks.md)
 
@@ -20,7 +20,7 @@ The design promises "native cross-experiment comparison without manual CSV expor
 - Node search by kind, schema, label text, creation time and JSONB path predicates over `attrs`, with cursor pagination.
 - A dataset channel summary, and reading pages with optional time-bucket aggregation.
 - Comparison: aligned series for up to 20 datasets on one channel, and a side-by-side attribute table for up to 50 nodes.
-- UI: search panel, dataset chart, comparison view.
+- UI: search panel, dataset chart, comparison view. Node search also powers the top-bar quick search and replaces SPEC-025's ID-only input picker on the run view (design §3).
 
 **Out of scope**
 - Saved queries, dashboards and alerts.

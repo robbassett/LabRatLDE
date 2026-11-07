@@ -5,6 +5,7 @@ import RecordForm from './RecordForm';
 import SchemaDraftEditor from './SchemaDraftEditor';
 import { tabKey, type Tab } from './tabs';
 import { useSchemaValidation } from './useSchemaValidation';
+import ErrorMessage from './ErrorMessage';
 
 const BLANK_BODY = '{"type":"object","properties":{}}';
 
@@ -91,7 +92,7 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
   const name = id.slice(slash + 1);
   const [detail, setDetail] = useState<SchemaDetail | null>(null);
   const [meId, setMeId] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [version, setVersion] = useState<SchemaVersion | null>(null);
@@ -99,12 +100,12 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
   const [minor, setMinor] = useState('0');
   const [draftText, setDraftText] = useState(BLANK_BODY);
   const [creating, setCreating] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<unknown>(null);
 
   useEffect(() => {
     getMe()
       .then((m) => setMeId(m.id))
-      .catch((err: unknown) => setError(errorMessage(err)));
+      .catch((err: unknown) => setError(err));
   }, []);
 
   // The new draft starts as the next minor of the highest version, with that version's text.
@@ -125,9 +126,9 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
         }
         getSchemaVersion(latest.id)
           .then((v) => live && setDraftText(v.body_text))
-          .catch((err: unknown) => live && setError(errorMessage(err)));
+          .catch((err: unknown) => live && setError(err));
       })
-      .catch((err: unknown) => live && setError(errorMessage(err)));
+      .catch((err: unknown) => live && setError(err));
     return () => {
       live = false;
     };
@@ -139,7 +140,7 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
     let live = true;
     getSchemaVersion(selected)
       .then((v) => live && setVersion(v))
-      .catch((err: unknown) => live && setError(errorMessage(err)));
+      .catch((err: unknown) => live && setError(err));
     return () => {
       live = false;
     };
@@ -153,7 +154,7 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
       setReload((n) => n + 1);
       setSelected(v.id);
     } catch (err: unknown) {
-      setDraftError(errorMessage(err));
+      setDraftError(err);
     } finally {
       setCreating(false);
     }
@@ -164,11 +165,7 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
       <h1>
         {ns}/{name}
       </h1>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      <ErrorMessage error={error} action="load the schema" />
       {!detail && !error && <p className="muted">Loading…</p>}
       {detail && (
         <>
@@ -236,11 +233,7 @@ export default function SchemaView({ id, rename }: { id: string; open: (t: Tab) 
               Schema text (JSON)
               <textarea className="mono" rows={8} value={draftText} onChange={(e) => setDraftText(e.target.value)} disabled={creating} />
             </label>
-            {draftError && (
-              <p role="alert" className="error">
-                {draftError}
-              </p>
-            )}
+            <ErrorMessage error={draftError} action="create the draft" />
             <div className="actions">
               <button type="button" onClick={newDraft} disabled={creating}>
                 Create draft

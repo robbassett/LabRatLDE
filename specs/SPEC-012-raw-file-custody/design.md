@@ -17,8 +17,17 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- Drop files onto a run view or the explorer to upload. A progress bar shows, and the resulting hash is displayed.
-- Raw file view: metadata, hash, fixity status with a "re-check" button, download, and preview (text/CSV first 1 MB as a table; PDF and images inline; other types download only).
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- **Upload:** drop files on the run view's Data card (SPEC-025 `RunData`), or use the **Upload file** button there or in the New menu. The button is the keyboard and touch equivalent of dragging (WCAG 2.5.7). While dragging, the target shows a dashed `--primary` border and "Drop to upload to <run label>". Each file gets a progress row (name, size, progress bar, Cancel). On completion a toast confirms it and the file appears in Data with the status "Stored".
+- **Same bytes again:** an info message, not an error: "This file is already stored (uploaded by <name> on <date>)", linking to it.
+- **Raw file view:**
+  - Header: file name, type icon, size, who uploaded it and when. **Download** is the primary action.
+  - Preview: text and CSV show the first 1 MB as a DataTable with "Showing the first N rows". PDF and images display inline. Other types show "No preview for this file type" and Download.
+  - Fixity: a status row with icon and words ("Fingerprint verified 2026-11-06 10:02", or a danger icon with "Fingerprint does not match: tell QA") and a **Re-check** button.
+  - The SHA-256 sits in Record details as "File fingerprint (SHA-256)".
+  - A "Parsed into" card lists the datasets derived from the file (SPEC-013).
+- A 413 response names the maximum file size.
 
 ## 4. Decision log
 

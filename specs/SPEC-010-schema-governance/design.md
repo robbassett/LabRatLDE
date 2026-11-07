@@ -18,8 +18,17 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- Change-request review: side-by-side schema diff, lint results (pass/fail per rule), rendered form preview of before and after, impact list, signatures panel, and commit/reject.
-- The namespace page shows level, Stewards and pending change requests. The sandbox namespace `~<handle>` is created for each scientist on first use.
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- **Change-request review** opens from To do → Review changes. Header: schema name, a namespace level badge (Sandbox `FlaskConical` / Contract `FileCheck` / Controlled `ShieldCheck`, icon plus word, never colour alone), and the one next action for this user as the primary button: Approve, Sign as Steward, Sign as QA, or the text "Waiting for QA signature". Tabs:
+  - *Changes*: a plain-language summary first ("Adds optional field `ph_target`", "Removes field `lot_ref`: breaking"), then the side-by-side schema diff.
+  - *Form preview*: before and after rendered read-only with the SPEC-009 form, so a scientist sees what will change on screen.
+  - *Checks*: one row per lint rule with a pass or fail icon and words. A failing rule links to the field in the diff and carries the hint "Start a new major version instead" (Contract) or "Breaking changes aren't allowed in a Controlled namespace" (Controlled).
+  - *Impact*: dependent protocols, runs and consumers in a DataTable, with counts first.
+  - Signatures panel as SPEC-008. Commit and Reject open a Dialog with a required reason; Reject is `.btn-danger`.
+- **Schemas sidebar section** groups schemas by namespace. "My sandbox" (`~<handle>`) is pinned first. A namespace page shows its level badge with a one-sentence explanation of the level, its Stewards, pending change requests and, for Stewards, **Promote**.
+- **Extend this schema** on a published schema opens a draft in the user's sandbox. The editor states that the original stays unchanged (the Sandbox Rule).
+- Empty state: "Nothing to review. Changes proposed to schemas you steward appear here."
 
 ## 4. Decision log
 

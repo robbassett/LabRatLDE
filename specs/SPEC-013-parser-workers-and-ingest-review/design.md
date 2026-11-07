@@ -18,8 +18,17 @@ Requirements: [requirements.md](requirements.md)
 
 ## 3. UI
 
-- Ingest review queue: proposed parser change sets, newest first, showing the instrument, file name and the count of unresolved matches.
-- Review screen: raw file preview (left), parsed rows (right), and per-row match chips with confidence. Low confidence is highlighted. Actions are confirm, choose another sample (node picker) or create a new sample. Schema problems appear in the Problems panel. Commit is enabled only when all matches are resolved and no blocking problems remain.
+Built on the SPEC-025 design system: tokens, shared components (`StatusBadge`, `Field`, `Dialog`, `EmptyState`, `RecordDetails`, `ErrorMessage`, toasts), the plain-language glossary and the error-message table. Every action shows a toast on success and an inline `ErrorMessage` on failure; identifiers and digests go in Record details.
+
+- **Ingest review queue:** a third tab in To do, "Instrument data", with its count. Rows: instrument, file name, received time, the parser that proposed it, and an `--accent` badge such as "3 to check".
+- **Review screen:**
+  - Layout: the raw file preview on the left and the parsed rows on the right, in a DataTable. A sticky footer shows progress ("12 of 15 rows matched") and **Commit**.
+  - Content from the parser is labelled "Proposed by parser <name>".
+  - Match chips show confidence as an icon plus a word (High, Check, No match), never colour alone. Rows needing attention sort first and use the `--warn` tint.
+  - Row actions: **Confirm**, **Choose another sample** (the SPEC-011 `ComboBox`, with ID entry as fallback) and **Create new sample** (the SPEC-009 form in a Dialog).
+  - Each match is confirmed on its own (R05, D10), so there is no "confirm all". To keep that fast: `J` and `K` move between rows, `Enter` confirms the focused match, and focus moves on to the next unresolved row. The shortcuts are listed in a tooltip on the footer.
+- **Commit** is never silently disabled. The footer says what's blocking it: "Resolve 3 rows and 1 problem to commit". Schema problems appear in the Problems panel, which opens by itself (SPEC-025-R10).
+- Empty state: "No instrument files waiting. Files from the drop folder appear here once a parser has read them."
 
 ## 4. Decision log
 

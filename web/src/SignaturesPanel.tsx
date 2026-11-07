@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getMe, type Me, type RunDetail, type Signature } from './api';
+import { type Me, type RunDetail, type Signature } from './api';
+import { loadMe } from './me';
 import { takePendingSign, type PendingSign } from './auth';
 import SignDialog from './SignDialog';
 
@@ -21,7 +22,7 @@ export default function SignaturesPanel({ run, onSigned }: { run: RunDetail; onS
 
   useEffect(() => {
     let live = true;
-    getMe()
+    loadMe()
       .then((m) => live && setMe(m))
       .catch(() => {});
     return () => {
@@ -59,10 +60,11 @@ export default function SignaturesPanel({ run, onSigned }: { run: RunDetail; onS
 
   return (
     <section aria-labelledby="signatures-heading">
-      <h2 id="signatures-heading" tabIndex={-1} ref={heading}>
+      <h2 id="signatures-heading" tabIndex={-1} ref={heading} style={{ marginBottom: 'var(--space-3)' }}>
         Signatures
       </h2>
-      <table className="data">
+      <div className="table-wrap">
+      <table className="table">
         <caption className="sr-only">Signatures and the policy steps awaiting one</caption>
         <thead>
           <tr>
@@ -88,10 +90,13 @@ export default function SignaturesPanel({ run, onSigned }: { run: RunDetail; onS
           ))}
         </tbody>
       </table>
+      </div>
       {canSign && (
         <p>
           <button
             type="button"
+            id="sign-next"
+            className="btn btn-primary"
             ref={signButton}
             onClick={() => setSigning({ step: next.step, meaning: next.meaning, resume: null })}
           >
@@ -128,10 +133,10 @@ function SignatureRow({ sig }: { sig: Signature }) {
       </td>
       <td>
         {sig.valid ? (
-          'Valid'
+          <span className="badge tone-ok">Valid</span>
         ) : (
           <span>
-            Invalidated by change set <a href="#/inbox">{sig.invalidated_by_change_set?.slice(0, 8)}</a>:{' '}
+            Invalidated by change request <a href="#/todo/review">{sig.invalidated_by_change_set?.slice(0, 8)}</a>:{' '}
             {sig.invalidated_reason}
           </span>
         )}

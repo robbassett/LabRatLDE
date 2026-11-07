@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createDelegation, endDelegation, listDelegations, listPrincipals, type Delegation, type Principal } from './api';
 import { OutcomeLine, ReasonForm, type Outcome } from './PrincipalsView';
+import ErrorMessage from './ErrorMessage';
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -11,7 +12,7 @@ function message(err: unknown): string {
 export default function DelegationsView() {
   const [delegations, setDelegations] = useState<Delegation[] | null>(null);
   const [principals, setPrincipals] = useState<Principal[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [creating, setCreating] = useState(false);
   const [ending, setEnding] = useState<Delegation | null>(null);
   const [outcome, setOutcome] = useState<Outcome>(null);
@@ -22,7 +23,7 @@ export default function DelegationsView() {
         setDelegations(d.items);
         setPrincipals(p.items);
       })
-      .catch((err: unknown) => setLoadError(message(err)));
+      .catch((err: unknown) => setLoadError(err));
   }, []);
 
   useEffect(reload, [reload]);
@@ -34,7 +35,7 @@ export default function DelegationsView() {
     reload();
   }
 
-  if (loadError) return <p role="alert" className="error">{loadError}</p>;
+  if (loadError) return <ErrorMessage error={loadError} action="load agent delegations" />;
   if (!delegations) return <p className="muted">Loading delegations…</p>;
 
   const agents = principals.filter((p) => p.kind === 'agent' && p.enabled);

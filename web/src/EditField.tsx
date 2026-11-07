@@ -3,6 +3,7 @@ import type { RJSFSchema } from '@rjsf/utils';
 import { ApiError, getSchemaVersion, type SchemaProblem } from './api';
 import RecordForm from './RecordForm';
 import { useSchemaValidation } from './useSchemaValidation';
+import ErrorMessage from './ErrorMessage';
 
 type Props = {
   label: string;
@@ -14,6 +15,8 @@ type Props = {
   proposeOnly?: boolean;
   // readOnly: the record is frozen and can't be corrected (aborted, or signed before SPEC-008).
   readOnly?: boolean;
+  // canEdit false hides the Edit button: the user lacks the role, and a RoleNotice on the view says so.
+  canEdit?: boolean;
   // schemaVersionId: show and edit the JSON value as a form for this schema version (SPEC-009-R09).
   // warnOnly lists its problems as a warning (a planned run's params are only checked at start).
   schemaVersionId?: string;
@@ -25,12 +28,12 @@ type Props = {
 // EditField shows a value with an Edit control. Saving needs a reason. A "changed" button
 // opens the bottom panel's Revisions tab. A successful save dispatches labrat:revised, unless it
 // only proposed a correction, which links to the review inbox instead.
-export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, schemaVersionId, warnOnly, onSave }: Props) {
+export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, canEdit = true, schemaVersionId, warnOnly, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [proposed, setProposed] = useState(false);
   const [draft, setDraft] = useState('');
   const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [schema, setSchema] = useState<RJSFSchema | null>(null);
   const [saveProblems, setSaveProblems] = useState<SchemaProblem[] | null>(null);
@@ -108,7 +111,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
       if (proposeOnly || result === 'proposed') setProposed(true);
       else window.dispatchEvent(new CustomEvent('labrat:revised'));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
       if (err instanceof ApiError && err.problems.length > 0) setSaveProblems(err.problems);
     } finally {
       setSaving(false);
@@ -123,21 +126,17 @@ export default function EditField({ label, value, multiline, json, changed, prop
         ) : (
           <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
         )}
-        {error && schemaVersionId && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        {readOnly ? (
+        {schemaVersionId ? <ErrorMessage error={error} action="load the schema" /> : null}
+        {!canEdit ? null : readOnly ? (
           <span className="muted"> Read-only: this record is frozen.</span>
         ) : (
-          <button type="button" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
+          <button type="button" className="btn btn-sm" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>
             Edit
           </button>
         )}
         {proposed && (
           <p role="status">
-            Correction proposed. A reviewer can commit it from the <a href="#/inbox">Review inbox</a>.
+            Correction proposed. A reviewer can commit it from <a href="#/todo/review">To do</a>.
           </p>
         )}
         {changed && (
@@ -193,13 +192,9 @@ export default function EditField({ label, value, multiline, json, changed, prop
         Reason
         <input value={reason} onChange={(e) => setReason(e.target.value)} disabled={saving} required />
       </label>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      <ErrorMessage error={error} action="save the change" />
       <div className="actions">
-        <button type="submit" disabled={saving || reason.trim() === ''}>
+        <button type="submit" className="btn btn-primary" disabled={saving || reason.trim() === ''}>
           {proposeOnly ? 'Propose correction' : 'Save'}
         </button>
         <button type="button" onClick={cancel} disabled={saving}>

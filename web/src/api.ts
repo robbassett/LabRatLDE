@@ -389,6 +389,16 @@ export function storedActor(): string | null {
   return stored(ACTOR_KEY);
 }
 
+// streamAuthHeaders are the headers an instrument command line needs (SPEC-025-R26). In dev they
+// are this session's tenant and handle, so the copied command works as-is. With OIDC the user's
+// token is never shown: the command carries a placeholder for a service account's token.
+export function streamAuthHeaders(): { headers: string[]; needsToken: boolean } {
+  const tenant = stored(TENANT_KEY);
+  const actor = stored(ACTOR_KEY);
+  if (!accessToken && tenant && actor) return { headers: [`X-LDE-Tenant: ${tenant}`, `X-LDE-Actor: ${actor}`], needsToken: false };
+  return { headers: ['Authorization: Bearer YOUR_TOKEN'], needsToken: true };
+}
+
 export function setSession(tenant: string, actor: string): void {
   try {
     localStorage.setItem(TENANT_KEY, tenant);
@@ -731,4 +741,37 @@ export function createRun(r: {
   params?: Record<string, unknown>;
 }): Promise<Run> {
   return post('/v1/runs', r);
+}
+
+// SPEC-025 workflow calls. Every one is an existing endpoint except GET /v1/runs.
+
+export type RunListItem = {
+  id: string;
+  label: string;
+  state: RunState;
+  created_at: string;
+  experiment_id: string;
+  experiment_slug: string;
+};
+
+// listAllRuns lists runs across experiments, newest first, optionally only in the given states.
+export function listAllRuns(states: RunState[] = [], cursor?: string, limit?: number): Promise<Page<RunListItem>> {
+  return get(`/v1/runs${qs({ state: states.join(','), cursor, limit: limit ? String(limit) : undefined })}`);
+}
+
+export function createExperiment(e: { slug: string; title: string; protocol_md: string }): Promise<Experiment> {
+  return post('/v1/experiments', e);
+}
+
+export function createProtocolVersion(experimentId: string, protocolMd: string): Promise<ProtocolVersion> {
+  return post(`/v1/experiments/${encodeURIComponent(experimentId)}/protocol-versions`, { protocol_md: protocolMd });
+}
+
+// createEdge links two lineage nodes. Edges point downstream: an input is `from`, the run using it is `to`.
+export function createEdge(e: LineageEdge): Promise<LineageEdge> {
+  return post('/v1/lineage/edges', e);
+}
+
+export function createInstrument(i: { name: string; kind: string }): Promise<Instrument> {
+  return post('/v1/instruments', i);
 }

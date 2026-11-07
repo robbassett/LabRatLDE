@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { getMe, type Me } from './api';
+import ErrorMessage from './ErrorMessage';
 
-type Fetched = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; me: Me };
+type Fetched = { status: 'loading' } | { status: 'error'; message: unknown } | { status: 'ready'; me: Me };
 
 // MeView shows who the server thinks you are, and the roles you hold.
 export default function MeView() {
@@ -14,7 +15,7 @@ export default function MeView() {
         if (live) setFetched({ status: 'ready', me });
       })
       .catch((err: unknown) => {
-        if (live) setFetched({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+        if (live) setFetched({ status: 'error', message: err });
       });
     return () => {
       live = false;
@@ -22,7 +23,7 @@ export default function MeView() {
   }, []);
 
   if (fetched.status === 'loading') return <p className="muted">Loading your account…</p>;
-  if (fetched.status === 'error') return <p role="alert" className="error">{fetched.message}</p>;
+  if (fetched.status === 'error') return <ErrorMessage error={fetched.message} action="load your account" />;
   const { me } = fetched;
 
   return (

@@ -13,13 +13,20 @@ import {
   type Role,
   type RoleGrant,
 } from './api';
+import ErrorMessage from './ErrorMessage';
+import { toast } from './Toasts';
+import { useMe } from './me';
 
 // Feedback after an action: what happened, or what went wrong.
 export type Outcome = { ok: boolean; text: string } | null;
 
+// OutcomeLine confirms a success with a toast (SPEC-025-R20) and shows a failure in place.
 export function OutcomeLine({ outcome }: { outcome: Outcome }) {
-  if (!outcome) return null;
-  return outcome.ok ? <p role="status">{outcome.text}</p> : <p role="alert" className="error">{outcome.text}</p>;
+  useEffect(() => {
+    if (outcome?.ok) toast(outcome.text);
+  }, [outcome]);
+  if (!outcome || outcome.ok) return null;
+  return <ErrorMessage error={outcome.text} action="finish that" />;
 }
 
 function message(err: unknown): string {
@@ -36,7 +43,7 @@ export function ReasonForm({ title, submitLabel, onSubmit, onCancel, children }:
 }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -45,7 +52,7 @@ export function ReasonForm({ title, submitLabel, onSubmit, onCancel, children }:
     setError(null);
     onSubmit(reason.trim()).catch((err: unknown) => {
       setBusy(false);
-      setError(message(err));
+      setError(err);
     });
   }
 
@@ -55,7 +62,7 @@ export function ReasonForm({ title, submitLabel, onSubmit, onCancel, children }:
       {children}
       <label htmlFor="action-reason">Reason (recorded in the audit trail)</label>
       <input id="action-reason" value={reason} onChange={(e) => setReason(e.target.value)} required autoFocus />
-      {error && <p role="alert" className="error">{error}</p>}
+      <ErrorMessage error={error} action="save the change" />
       <div className="actions">
         <button type="submit" disabled={busy || !reason.trim()}>
           {submitLabel}
@@ -81,7 +88,7 @@ type Action =
 export default function PrincipalsView() {
   const [principals, setPrincipals] = useState<Principal[] | null>(null);
   const [more, setMore] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [action, setAction] = useState<Action | null>(null);
   const [outcome, setOutcome] = useState<Outcome>(null);
 
@@ -91,7 +98,7 @@ export default function PrincipalsView() {
         setPrincipals(p.items);
         setMore(p.next_cursor !== null);
       })
-      .catch((err: unknown) => setLoadError(message(err)));
+      .catch((err: unknown) => setLoadError(err));
   }, []);
 
   useEffect(reload, [reload]);
@@ -108,23 +115,23 @@ export default function PrincipalsView() {
     setAction(a);
   }
 
-  if (loadError) return <p role="alert" className="error">{loadError}</p>;
-  if (!principals) return <p className="muted">Loading principals…</p>;
+  if (loadError) return <ErrorMessage error={loadError} action="load users and service accounts" />;
+  if (!principals) return <p className="muted">Loading accounts…</p>;
 
   return (
     <article className="view">
-      <h1>Principals</h1>
-      <p className="muted">People, services and agents in this tenant. Handles are never reused; disable a principal instead of removing it.</p>
+      <h1>Users and service accounts</h1>
+      <p className="muted">People, services and agents in this tenant. Handles are never reused: disable an account instead of removing it.</p>
       <p>
         <button type="button" onClick={() => start({ type: 'create' })}>
-          New principal
+          New user or service account
         </button>
       </p>
       <OutcomeLine outcome={outcome} />
       {action && <ActionPanel action={action} onDone={done} onCancel={() => setAction(null)} />}
 
       <table className="data">
-        <caption className="sr-only">Principals and their roles</caption>
+        <caption className="sr-only">Users and service accounts, and their roles</caption>
         <thead>
           <tr>
             <th scope="col">Handle</th>
@@ -179,7 +186,7 @@ export default function PrincipalsView() {
           ))}
         </tbody>
       </table>
-      {more && <p className="muted">Showing the first 200 principals.</p>}
+      {more && <p className="muted">Showing the first 200 accounts.</p>}
     </article>
   );
 }
@@ -275,7 +282,13 @@ function GrantForm({ principal, onDone, onCancel }: { principal: Principal; onDo
 }
 
 function CreateForm({ onDone, onCancel }: { onDone: (text: string) => void; onCancel: () => void }) {
+  const me = useMe();
+  const dev = me?.auth === 'dev';
   const [p, setP] = useState<Omit<NewPrincipal, 'reason'>>({ kind: 'human', handle: '', display_name: '', email: '', issuer: '', subject: '' });
+  // A development server signs people in as issuer "dev" with their handle as subject: fill those in.
+  useEffect(() => {
+    if (dev) setP((x) => ({ ...x, issuer: x.issuer || 'dev', subject: x.subject || x.handle }));
+  }, [dev, p.handle]);
   const set = (k: keyof typeof p) => (e: { target: { value: string } }) => setP({ ...p, [k]: e.target.value });
   const field = (k: 'handle' | 'display_name' | 'email' | 'issuer' | 'subject', label: string, hint?: string) => (
     <>

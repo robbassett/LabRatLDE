@@ -1,24 +1,25 @@
 import { useEffect, useId, useState } from 'react';
 import type { RJSFSchema } from '@rjsf/utils';
-import { createRun, getProtocolVersion, getSchemaVersion, type Experiment } from './api';
+import { createRun, getProtocolVersion, getSchemaVersion, type Experiment, type Run } from './api';
+import ErrorMessage from './ErrorMessage';
+import { refreshSidebar } from './events';
+import Field from './Field';
 import RecordForm from './RecordForm';
 import type { Tab } from './tabs';
+import { toast } from './Toasts';
 import { useSchemaValidation } from './useSchemaValidation';
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-// NewRunForm creates a run of the experiment's current protocol version and opens it (SPEC-009-R09).
-// Params are checked when the run starts, so problems warn here and never block the create.
-export default function NewRunForm({ exp, open }: { exp: Experiment; open: (t: Tab) => void }) {
+// NewRunForm plans a run of the experiment's current protocol version and opens it (SPEC-009-R09).
+// Parameters are checked when the run starts, so problems warn here and never block the create.
+export default function NewRunForm({ exp, open, onCreated }: { exp: Experiment; open: (t: Tab) => void; onCreated?: (run: Run) => void }) {
   const [paramsSchemaId, setParamsSchemaId] = useState<string | null>(null);
   const [schema, setSchema] = useState<RJSFSchema | null>(null);
   const [label, setLabel] = useState('');
   const [inputs, setInputs] = useState('');
   const [value, setValue] = useState<unknown>({});
   const [text, setText] = useState('{}');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [jsonError, setJsonError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const source = `newrun:${useId()}`;
 
@@ -35,9 +36,9 @@ export default function NewRunForm({ exp, open }: { exp: Experiment; open: (t: T
         if (v.bundled) {
           setParamsSchemaId(id);
           setSchema(v.bundled as RJSFSchema);
-        } else setError('Could not load the params schema: no bundled form.');
+        } else setJsonError("The protocol's parameter schema has no form, so enter parameters as JSON.");
       })
-      .catch((err: unknown) => live && setError(`Could not load the params schema: ${errorMessage(err)}`));
+      .catch((err: unknown) => live && setError(err));
     return () => {
       live = false;
     };
@@ -47,18 +48,19 @@ export default function NewRunForm({ exp, open }: { exp: Experiment; open: (t: T
 
   async function create() {
     let params: Record<string, unknown>;
+    setJsonError(null);
     if (schema) {
       params = value as Record<string, unknown>;
     } else {
       try {
         const parsed: unknown = JSON.parse(text);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          setError('Params must be a JSON object.');
+          setJsonError('Parameters must be a JSON object, like {"column": "C18"}.');
           return;
         }
         params = parsed as Record<string, unknown>;
       } catch {
-        setError('Params must be valid JSON.');
+        setJsonError('Parameters must be valid JSON, like {"column": "C18"}.');
         return;
       }
     }
@@ -68,48 +70,48 @@ export default function NewRunForm({ exp, open }: { exp: Experiment; open: (t: T
       const run = await createRun({
         experiment_id: exp.id,
         label: label.trim() || undefined,
-        inputs: inputs.split('\n').map((l) => l.trim()).filter((l) => l !== ''),
+        inputs: inputs
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l !== ''),
         params,
       });
-      open({ kind: 'run', id: run.id, title: label.trim() || 'run' });
+      const title = label.trim() || 'run';
+      toast(`Run "${title}" planned`);
+      refreshSidebar();
+      onCreated?.(run);
+      open({ kind: 'run', id: run.id, title });
     } catch (err: unknown) {
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <section aria-labelledby="new-run-heading">
-      <h2 id="new-run-heading">New run</h2>
-      {/* Not a <form>: RecordForm renders its own, and forms do not nest. */}
-      <div className="edit-form" role="group" aria-label="New run">
-        <label>
-          Label
-          <input value={label} onChange={(e) => setLabel(e.target.value)} disabled={saving} />
-        </label>
-        <label>
-          Inputs (one node id per line)
-          <textarea className="mono" rows={3} value={inputs} onChange={(e) => setInputs(e.target.value)} disabled={saving} />
-        </label>
-        {!schema && (
-          <label>
-            Params (JSON)
-            <textarea className="mono" rows={4} value={text} onChange={(e) => setText(e.target.value)} disabled={saving} />
-          </label>
-        )}
-        {schema && <RecordForm schema={schema} value={value} onChange={setValue} problems={problems} warnOnly />}
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <div className="actions">
-          <button type="button" onClick={create} disabled={saving}>
-            Create run
-          </button>
-        </div>
+    // Not a <form>: RecordForm renders its own, and forms do not nest.
+    <div role="group" aria-label={`Plan a run of ${exp.slug}`}>
+      <p className="muted">
+        Uses protocol v{exp.protocol_version} of {exp.title}. You can add inputs now or from the run once it's planned.
+      </p>
+      <Field label="Label" hint="How people will find this run, e.g. Batch 7 HPLC.">
+        <input value={label} onChange={(e) => setLabel(e.target.value)} disabled={saving} />
+      </Field>
+      <Field label="Inputs (optional)" hint="IDs of samples or materials this run uses, one per line.">
+        <textarea className="mono" rows={2} value={inputs} onChange={(e) => setInputs(e.target.value)} disabled={saving} />
+      </Field>
+      {!schema && (
+        <Field label="Parameters (JSON)" hint="Settings for this run, e.g. column or flow rate." error={jsonError}>
+          <textarea className="mono" rows={3} value={text} onChange={(e) => setText(e.target.value)} disabled={saving} />
+        </Field>
+      )}
+      {schema && <RecordForm schema={schema} value={value} onChange={setValue} problems={problems} warnOnly />}
+      <ErrorMessage error={error} action="plan the run" />
+      <div className="actions">
+        <button type="button" className="btn btn-primary" onClick={create} disabled={saving}>
+          {saving ? 'Planning…' : 'Plan run'}
+        </button>
       </div>
-    </section>
+    </div>
   );
 }
