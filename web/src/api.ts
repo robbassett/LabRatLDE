@@ -389,6 +389,16 @@ export function storedActor(): string | null {
   return stored(ACTOR_KEY);
 }
 
+// streamAuthHeaders are the headers an instrument command line needs (SPEC-025-R26). In dev they
+// are this session's tenant and handle, so the copied command works as-is. With OIDC the user's
+// token is never shown: the command carries a placeholder for a service account's token.
+export function streamAuthHeaders(): { headers: string[]; needsToken: boolean } {
+  const tenant = stored(TENANT_KEY);
+  const actor = stored(ACTOR_KEY);
+  if (!accessToken && tenant && actor) return { headers: [`X-LDE-Tenant: ${tenant}`, `X-LDE-Actor: ${actor}`], needsToken: false };
+  return { headers: ['Authorization: Bearer YOUR_TOKEN'], needsToken: true };
+}
+
 export function setSession(tenant: string, actor: string): void {
   try {
     localStorage.setItem(TENANT_KEY, tenant);

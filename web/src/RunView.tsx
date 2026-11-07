@@ -158,7 +158,7 @@ export default function RunView({ id, title, open, instruments }: Props) {
         <RunInputs run={run} canEdit={hasRole(me, 'scientist')} open={open} onChanged={reload} />
       </div>
 
-      <RunData run={run} instruments={instruments} />
+      <RunData run={run} instruments={instruments} onChanged={reload} />
 
       <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
         <SignaturesPanel run={run} onSigned={changedState} />

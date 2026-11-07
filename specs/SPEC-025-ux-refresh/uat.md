@@ -124,13 +124,15 @@ Open http://localhost:8080/ in a desktop browser at full width. In the dev serve
 - **As:** sam
 - **Steps:**
   1. **New → Register instrument**: name `HPLC-1`, kind `hplc`. Register.
-  2. Back on the running run, in **Data** click **Send data**. Pick `HPLC-1`. Click **Copy command**.
-  3. In a terminal, paste the command, replacing `Authorization: Bearer <your token>` with `-H 'X-LDE-Tenant: 00000000-0000-4000-8000-000000000001' -H 'X-LDE-Actor: sam'`, `readings.ndjson` with `examples/streams/hplc-uv.ndjson`, and `<label>` with `UV run 1`. Run it.
-  4. Reload the run tab.
+  2. Back on the running run, in **Data** click **Send data**. A dialog opens.
+  3. In the dialog: Instrument `HPLC-1`, Dataset label `UV run 1`, File `examples/streams/hplc-uv.ndjson` (a sample file in the repository). Click **Copy command**.
+  4. Open a terminal in the root folder of the LabRat checkout (the folder that contains `examples/`). Paste the command and press Enter, changing nothing. In Windows PowerShell, change the first word `curl` to `curl.exe`; Git Bash, cmd, macOS and Linux need no change.
+  5. Back in the dialog click **Done, show new data**.
 - **Expected:**
   - The instrument's tab opens and it appears in the sidebar and in the Send-data picker.
-  - The panel says instrument PCs usually send this automatically, and the command contains this server's address, the instrument's ID and the run's ID.
-  - After reload the Data card lists `UV run 1` with its reading count. **Record details** at the bottom of the run lists the dataset's SHA-256, the run and item IDs and the protocol fingerprint, each with a copy button.
+  - The dialog fits on screen without content spilling out. The command is one line, and contains this server's address, the instrument's ID, the run's ID, your tenant and handle, the file and the label; the note under it says it sends as you.
+  - The terminal prints a line like `{"dataset_id":"…","count":12,"sha256":"…",…}`.
+  - The dialog closes and the Data card lists `UV run 1` with 12 readings. **Record details** at the bottom of the run lists the dataset's SHA-256, the run and item IDs and the protocol fingerprint, each with a copy button.
 - **Result:** Pass / Fail · Notes:
 
 ### UAT-08: Pause, resume, complete

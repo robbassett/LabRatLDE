@@ -737,6 +737,15 @@ label {
   outline: none;
 }
 
+/* A popover holding a form (Send data): wider, and scrolls instead of spilling. */
+.popover.wide {
+  box-sizing: border-box;
+  width: min(36rem, calc(100vw - 2 * var(--space-4)));
+  max-width: none;
+  max-height: min(80vh, 44rem);
+  overflow: auto;
+}
+
 .popover[data-entering] {
   animation: fade-in var(--dur-fast) var(--ease);
 }

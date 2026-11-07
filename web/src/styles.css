@@ -719,18 +719,40 @@
   }
 }
 
-.send-data pre {
-  max-width: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: var(--text-xs);
-}
-
 .send-data {
   display: grid;
   gap: var(--space-3);
+  box-sizing: border-box;
+  min-width: 0;
   padding: var(--space-4);
-  width: min(36rem, 92vw);
+}
+
+.send-data > *,
+.send-data .field {
+  min-width: 0;
+  margin: 0;
+}
+
+.send-data p {
+  margin: 0;
+}
+
+.send-data {
+  padding: 0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.send-data pre {
+  margin: var(--space-1) 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+  user-select: all;
 }
 
 /* ---------- Lineage ---------- */
