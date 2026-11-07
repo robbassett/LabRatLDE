@@ -23,6 +23,7 @@ import { RunsArt } from './illustrations';
 import { hasRole, loadMe, useMe } from './me';
 import ProtocolEditor, { md, stripFrontmatter } from './ProtocolEditor';
 import RecordDetails from './RecordDetails';
+import RoleNotice from './RoleNotice';
 import StatusBadge from './StatusBadge';
 import { tabKey, type Tab } from './tabs';
 import { toast } from './Toasts';
@@ -268,6 +269,7 @@ export default function ExperimentView({ id, open, rename }: Props) {
               label="Title"
               value={exp.title}
               changed={changed}
+              canEdit={canCreate}
               onSave={async (value, reason) => {
                 await editExperimentTitle(id, value, reason);
                 toast('Title saved');
@@ -300,6 +302,7 @@ export default function ExperimentView({ id, open, rename }: Props) {
         </div>
       </div>
 
+      <RoleNotice what="plan runs, revise the protocol or edit this experiment" />
       <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(String(k))}>
         <TabList aria-label="Experiment sections">
           <ViewTab id="overview">Overview</ViewTab>

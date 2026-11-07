@@ -20,7 +20,15 @@ export function explain(err: unknown, action: string): Explained {
   const pick = (detail: string, hint: string): Explained => ({ title, detail, hint, server });
   if (s === 400) return pick("Something in the request isn't valid.", 'Check the highlighted fields.');
   if (s === 401) return pick('Your session has ended.', 'Sign in again.');
-  if (s === 403) return pick("You don't have the role this needs.", 'Ask an admin for the role named below.');
+  if (s === 403) {
+    // The database names the roles it wanted: "role denied: needs reviewer or qa".
+    const m = /needs ([a-z_]+(?: or [a-z_]+)*)/.exec(err.message);
+    if (m) {
+      const roles = m[1].replace(/_/g, ' ');
+      return { title, detail: `This needs the ${roles} role, and your account doesn't have it.`, hint: 'Ask an admin to grant it in Admin → Users and service accounts.' };
+    }
+    return pick("You don't have the role this needs.", 'Ask an admin for the role named below.');
+  }
   if (s === 404) return pick("That item doesn't exist, or you can't see it.", 'Check the ID, or ask whoever shared it.');
   if (s === 409)
     return pick(

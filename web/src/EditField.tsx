@@ -15,6 +15,8 @@ type Props = {
   proposeOnly?: boolean;
   // readOnly: the record is frozen and can't be corrected (aborted, or signed before SPEC-008).
   readOnly?: boolean;
+  // canEdit false hides the Edit button: the user lacks the role, and a RoleNotice on the view says so.
+  canEdit?: boolean;
   // schemaVersionId: show and edit the JSON value as a form for this schema version (SPEC-009-R09).
   // warnOnly lists its problems as a warning (a planned run's params are only checked at start).
   schemaVersionId?: string;
@@ -26,7 +28,7 @@ type Props = {
 // EditField shows a value with an Edit control. Saving needs a reason. A "changed" button
 // opens the bottom panel's Revisions tab. A successful save dispatches labrat:revised, unless it
 // only proposed a correction, which links to the review inbox instead.
-export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, schemaVersionId, warnOnly, onSave }: Props) {
+export default function EditField({ label, value, multiline, json, changed, proposeOnly, readOnly, canEdit = true, schemaVersionId, warnOnly, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [proposed, setProposed] = useState(false);
   const [draft, setDraft] = useState('');
@@ -125,7 +127,7 @@ export default function EditField({ label, value, multiline, json, changed, prop
           <span className={json || multiline ? 'edit-value mono' : 'edit-value'}>{value}</span>
         )}
         {schemaVersionId ? <ErrorMessage error={error} action="load the schema" /> : null}
-        {readOnly ? (
+        {!canEdit ? null : readOnly ? (
           <span className="muted"> Read-only: this record is frozen.</span>
         ) : (
           <button type="button" className="btn btn-sm" ref={editButton} aria-label={`Edit ${label}`} onClick={startEdit}>

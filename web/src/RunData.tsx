@@ -96,13 +96,23 @@ function SendData({ run, instruments, onDone }: { run: RunDetail; instruments: I
 
 // RunData (SPEC-025-R26): the datasets instruments sent, and while running,
 // how to send more.
-export default function RunData({ run, instruments, onChanged }: { run: RunDetail; instruments: Instrument[]; onChanged: () => void }) {
+export default function RunData({
+  run,
+  instruments,
+  onChanged,
+  canSend,
+}: {
+  run: RunDetail;
+  instruments: Instrument[];
+  onChanged: () => void;
+  canSend: boolean;
+}) {
   const [sending, setSending] = useState(false);
   return (
     <section className="card" aria-labelledby="data-heading" style={{ marginBottom: 'var(--space-4)' }}>
       <div className="card-head">
         <h2 id="data-heading">Data</h2>
-        {run.state === 'running' && (
+        {run.state === 'running' && canSend && (
           <button type="button" className="btn" onClick={() => setSending(true)}>
             <Send size={16} aria-hidden="true" /> Send data
           </button>
@@ -113,8 +123,10 @@ export default function RunData({ run, instruments, onChanged }: { run: RunDetai
           compact
           icon={<DataArt />}
           text={
-            run.state === 'running'
+            run.state === 'running' && canSend
               ? 'No data yet. Use Send data to see how an instrument sends readings to this run.'
+              : run.state === 'running'
+                ? 'No data yet.'
               : run.state === 'planned'
                 ? 'Data arrives once the run is started.'
                 : 'This run received no data.'

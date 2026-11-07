@@ -195,11 +195,16 @@ Open http://localhost:8080/ in a desktop browser at full width. In the dev serve
 - **Steps:**
   1. Stop the server. In LabRat, open the Audit trail and click **Verify chain**. Start the server again.
   2. Open `http://localhost:8080/#/run/00000000-0000-4000-8000-00000000dead`.
-  3. As an admin, in **Admin → Users and service accounts** create a user `vic` with no roles. Sign in as `vic` and try to plan a run from a URL-opened experiment, or note that New is disabled.
+  3. As sam (an admin on the dev server), open **Admin → Users and service accounts → New user or service account**. Kind human, handle `vic`, display name `Vic Test`. Issuer and Subject fill in as `dev` and `vic` on a development server; leave them. Give a reason and create. Don't grant any role.
+  4. In a private window sign in as `vic` (do this after step 3: a handle the dev server hasn't seen gets every role). Look at Home, then open **New** in the top bar.
+  5. As vic, open the experiment `hplc-purity-of-batch-lots`, then the run `Batch 7 HPLC`.
+  6. As vic, press Ctrl+K, type `New experiment`, press Enter, enter any title and click **Create experiment**.
 - **Expected:**
   - Step 1: "Couldn't verify the audit trail. LabRat can't be reached. Check your connection and try again. Nothing was saved."
   - Step 2: "Couldn't load the run. That item doesn't exist, or you can't see it. Check the ID, or ask whoever shared it."
-  - Step 3: New's items are disabled for vic; Home's Get started says the scientist role is needed. Where a call is refused, the message says "You don't have the role this needs" and names the role.
+  - Step 4: Home shows a blue notice: "Your account has no roles yet, so you can look but not create experiments, runs, samples or instruments. Ask an admin to grant the scientist role in Admin → Users and service accounts." Every item in New is greyed out with "Needs the scientist role" under it.
+  - Step 5: the experiment and the run each show the same notice, naming what can't be done there (plan runs, revise the protocol; start, pause or complete the run, add inputs). No Plan run, Edit, lifecycle, Add input or Send data buttons appear.
+  - Step 6: the server refuses, and the dialog says "Couldn't create the experiment. This needs the scientist role, and your account doesn't have it. Ask an admin to grant it in Admin → Users and service accounts."
 - **Result:** Pass / Fail · Notes:
 
 ### UAT-13: Keyboard, screen reader, narrow screen

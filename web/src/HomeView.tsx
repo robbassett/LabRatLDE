@@ -6,6 +6,7 @@ import ErrorMessage from './ErrorMessage';
 import { openNew } from './events';
 import { ExperimentsArt, RunsArt, ToDoArt } from './illustrations';
 import { hasRole, useMe } from './me';
+import RoleNotice from './RoleNotice';
 import StatusBadge from './StatusBadge';
 import { todoTab, type Tab } from './tabs';
 import type { ToDo } from './todo';
@@ -78,9 +79,6 @@ function GetStarted({ canCreate }: { canCreate: boolean }) {
       <h2 id="get-started" style={{ marginBottom: 'var(--space-3)' }}>
         Get started
       </h2>
-      {!canCreate && (
-        <p className="muted">You need the scientist role to create experiments. Ask an admin to grant it.</p>
-      )}
       <ol className="steps">
         {steps.map((s, i) => (
           <li key={s.title} data-next={i === 0}>
@@ -125,6 +123,7 @@ export default function HomeView({ open, todo, handle }: { open: (t: Tab) => voi
         </div>
       </div>
 
+      <RoleNotice what="create experiments, runs, samples or instruments" />
       <ErrorMessage error={experiments.error} action="load experiments" />
       {experiments.data === null && !experiments.error && <p className="muted">Loading…</p>}
       {noExperiments && <GetStarted canCreate={canCreate} />}

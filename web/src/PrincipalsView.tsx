@@ -15,6 +15,7 @@ import {
 } from './api';
 import ErrorMessage from './ErrorMessage';
 import { toast } from './Toasts';
+import { useMe } from './me';
 
 // Feedback after an action: what happened, or what went wrong.
 export type Outcome = { ok: boolean; text: string } | null;
@@ -281,7 +282,13 @@ function GrantForm({ principal, onDone, onCancel }: { principal: Principal; onDo
 }
 
 function CreateForm({ onDone, onCancel }: { onDone: (text: string) => void; onCancel: () => void }) {
+  const me = useMe();
+  const dev = me?.auth === 'dev';
   const [p, setP] = useState<Omit<NewPrincipal, 'reason'>>({ kind: 'human', handle: '', display_name: '', email: '', issuer: '', subject: '' });
+  // A development server signs people in as issuer "dev" with their handle as subject: fill those in.
+  useEffect(() => {
+    if (dev) setP((x) => ({ ...x, issuer: x.issuer || 'dev', subject: x.subject || x.handle }));
+  }, [dev, p.handle]);
   const set = (k: keyof typeof p) => (e: { target: { value: string } }) => setP({ ...p, [k]: e.target.value });
   const field = (k: 'handle' | 'display_name' | 'email' | 'issuer' | 'subject', label: string, hint?: string) => (
     <>

@@ -19,6 +19,7 @@ import { TERM } from './glossary';
 import { hasRole, useMe } from './me';
 import Notes from './Notes';
 import RecordDetails from './RecordDetails';
+import RoleNotice from './RoleNotice';
 import RunData from './RunData';
 import RunInputs from './RunInputs';
 import RunLifecycle from './RunLifecycle';
@@ -130,6 +131,9 @@ export default function RunView({ id, title, open, instruments }: Props) {
         </div>
       )}
 
+      {(run.state === 'planned' || run.state === 'running' || run.state === 'paused') && (
+        <RoleNotice what="start, pause or complete this run, add inputs or change its parameters" />
+      )}
       <div className="run-grid">
         <section className="card" aria-labelledby="params-heading">
           <div className="card-head">
@@ -144,6 +148,7 @@ export default function RunView({ id, title, open, instruments }: Props) {
             changed={changed}
             proposeOnly={proposeOnly}
             readOnly={readOnly}
+            canEdit={hasRole(me, 'scientist')}
             onSave={async (value, reason) => {
               const params = JSON.parse(value) as Record<string, unknown>;
               if (proposeOnly) {
@@ -158,7 +163,7 @@ export default function RunView({ id, title, open, instruments }: Props) {
         <RunInputs run={run} canEdit={hasRole(me, 'scientist')} open={open} onChanged={reload} />
       </div>
 
-      <RunData run={run} instruments={instruments} onChanged={reload} />
+      <RunData run={run} instruments={instruments} onChanged={reload} canSend={hasRole(me, 'scientist')} />
 
       <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
         <SignaturesPanel run={run} onSigned={changedState} />

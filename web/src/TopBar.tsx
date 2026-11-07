@@ -1,5 +1,6 @@
 import { Check, ListChecks, LogOut, Monitor, Moon, PanelLeft, Plus, Search, Sun, UserRound } from 'lucide-react';
 import { useState } from 'react';
+import { Text } from 'react-aria-components';
 import { openNew, openPalette, type NewKind } from './events';
 import LabRatMark from './LabRatMark';
 import { hasRole, useMe } from './me';
@@ -70,17 +71,37 @@ export default function TopBar({
         ariaLabel="New"
         onAction={(k) => openNew(String(k) as NewKind)}
       >
-        <MenuItem id="experiment" isDisabled={!canCreate}>
-          New experiment
+        <MenuItem id="experiment" isDisabled={!canCreate} textValue="New experiment">
+          <Text slot="label">New experiment</Text>
+          {!canCreate && (
+            <Text slot="description" className="menu-hint">
+              Needs the scientist role
+            </Text>
+          )}
         </MenuItem>
-        <MenuItem id="run" isDisabled={!canCreate}>
-          New run
+        <MenuItem id="run" isDisabled={!canCreate} textValue="New run">
+          <Text slot="label">New run</Text>
+          {!canCreate && (
+            <Text slot="description" className="menu-hint">
+              Needs the scientist role
+            </Text>
+          )}
         </MenuItem>
-        <MenuItem id="record" isDisabled={!canCreate}>
-          New sample or material
+        <MenuItem id="record" isDisabled={!canCreate} textValue="New sample or material">
+          <Text slot="label">New sample or material</Text>
+          {!canCreate && (
+            <Text slot="description" className="menu-hint">
+              Needs the scientist role
+            </Text>
+          )}
         </MenuItem>
-        <MenuItem id="instrument" isDisabled={!canCreate}>
-          Register instrument
+        <MenuItem id="instrument" isDisabled={!canCreate} textValue="Register instrument">
+          <Text slot="label">Register instrument</Text>
+          {!canCreate && (
+            <Text slot="description" className="menu-hint">
+              Needs the scientist role
+            </Text>
+          )}
         </MenuItem>
       </Menu>
       <button

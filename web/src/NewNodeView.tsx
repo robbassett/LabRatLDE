@@ -5,6 +5,7 @@ import ErrorMessage from './ErrorMessage';
 import Field from './Field';
 import { KIND_LABEL } from './glossary';
 import RecordForm from './RecordForm';
+import RoleNotice from './RoleNotice';
 import type { Tab } from './tabs';
 import { toast } from './Toasts';
 import { useSchemaValidation } from './useSchemaValidation';
@@ -176,6 +177,7 @@ export default function NewNodeView({ open }: { open: (t: Tab) => void }) {
           <p className="subtitle">Record a sample, reagent or other material so runs can use it and its lineage is traced.</p>
         </div>
       </div>
+      <RoleNotice what="record samples or materials" />
       <div className="card" style={{ maxWidth: '40rem' }}>
         <NewNodeForm
           kinds={[...MATERIAL_KINDS, 'protocol', 'dataset']}
