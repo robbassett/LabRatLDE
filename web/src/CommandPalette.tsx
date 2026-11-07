@@ -19,6 +19,11 @@ export default function CommandPalette({ items, onClose }: { items: PaletteItem[
   const matches = items.filter((i) => i.title.toLowerCase().includes(q));
   const at = Math.min(sel, Math.max(matches.length - 1, 0));
 
+  // Keep the highlighted option in view as Up/Down move it (SPEC-025-R30, UAT-13).
+  useEffect(() => {
+    document.getElementById(`palette-opt-${at}`)?.scrollIntoView({ block: 'nearest' });
+  }, [at, query]);
+
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'ArrowDown' && matches.length) setSel((at + 1) % matches.length);
     else if (e.key === 'ArrowUp' && matches.length) setSel((at + matches.length - 1) % matches.length);
